@@ -1,0 +1,61 @@
+{
+  "name": "dsh-scout",
+  "version": "0.1.0",
+  "description": "Evidence-driven company and job intelligence plugin for DeepSeek Harness.",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "tests"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm test",
+    "test:profile": "node scripts/profile-smoke.mjs",
+    "check:release": "npm test && npm run test:profile && pnpm pack --dry-run",
+    "prepare": "npm run build"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1 <5",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "typescript": "^5.8.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MaxHou-infinity/dsh-scout.git"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "company-research",
+    "job-intelligence",
+    "hrbp"
+  ]
+}

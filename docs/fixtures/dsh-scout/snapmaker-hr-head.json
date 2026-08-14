@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "dsh-scout.case.v0",
+  "caseId": "snapmaker-hr-head",
+  "title": "Snapmaker HR Head opportunity",
+  "language": "zh-CN",
+  "decisionObjective": "判断是否值得进入下一轮，并准备面试反问",
+  "subject": {
+    "name": "Snapmaker",
+    "possibleLegalEntity": "深圳快造科技有限公司",
+    "identitySourceIds": [],
+    "identityStatus": "needs_verification",
+    "identityNote": "这是历史调研案例标识，不是当前工商核验结果。运行时必须重新确认主体。"
+  },
+  "role": {
+    "title": "HR Head / HR 负责人",
+    "location": "深圳",
+    "fitQuestion": "该岗位是否拥有足够的业务授权，值得以 HR 一号位方向继续推进？"
+  },
+  "expectedDecision": "VERIFY",
+  "expectedDecisionReason": "历史材料显示岗位匹配度较高，但公司主体、当前组织规模、授权边界和真实业务优先级必须现场核验。",
+  "dimensions": [
+    "company_and_founder",
+    "product_and_technology",
+    "market_and_competition",
+    "financing_and_commercialization",
+    "organization_and_hr",
+    "risks",
+    "role_fit",
+    "interview_questions",
+    "next_verifications"
+  ],
+  "sources": [
+    {
+      "sourceId": "historical-snapmaker-research",
+      "type": "user_provided_historical_report",
+      "title": "Max 既有 Snapmaker 深度调研与面试复盘",
+      "url": null,
+      "capturedAt": null,
+      "evidenceLevel": "E1",
+      "status": "historical_only",
+      "note": "用于离线 fixture 的方法验证；不能替代运行时实时来源。"
+    }
+  ],
+  "claims": [
+    {
+      "claimId": "claim-identity",
+      "text": "品牌名 Snapmaker 与候选注册主体需要在运行时确认是否对应。",
+      "status": "needs_verification",
+      "evidenceLevel": "E0",
+      "dimension": "identity",
+      "impact": "blocking",
+      "sourceIds": [],
+      "confidenceNote": "历史案例只提供候选主体名称，没有当前工商核验来源。",
+      "nextAction": "查询工商主体、法定代表人、注册地和品牌关联信息。"
+    },
+    {
+      "claimId": "claim-role-scope",
+      "text": "该岗位可能承担从 0 到 1 搭建 HR 体系的职责。",
+      "status": "reported",
+      "evidenceLevel": "E1",
+      "dimension": "mandate",
+      "impact": "blocking",
+      "sourceIds": ["historical-snapmaker-research"],
+      "confidenceNote": "该判断来自历史调研材料，不能代表岗位当前授权。",
+      "nextAction": "面试确认汇报对象、团队现状、预算权限和前三个必须交付的业务结果。"
+    },
+    {
+      "claimId": "claim-fit",
+      "text": "Max 的 HRBP、SAP 变革、AI 硬件和 AI Agent 经验与该岗位可能存在较高匹配。",
+      "status": "inferred",
+      "evidenceLevel": "E1",
+      "dimension": "role_fit",
+      "impact": "material",
+      "sourceIds": ["historical-snapmaker-research"],
+      "confidenceNote": "匹配度是基于历史岗位假设的本地推断，尚未由当前招聘方确认。",
+      "nextAction": "用岗位真实授权边界和 CEO 对 HR 的期待验证匹配，而不是只比较年限。"
+    }
+  ],
+  "interviewQuestions": [
+    "如果 HR 只能在前三个月完成一件事，您希望它是什么？",
+    "这个岗位拥有的是执行权、建议权，还是组织变革的共同决策权？",
+    "当前最影响业务增长的组织问题是什么？它为什么现在才需要解决？",
+    "CEO 对 HR 的期待中，哪些是明确目标，哪些只是临时救火？",
+    "这个岗位在 6 个月后被认为成功，具体会看到哪些结果？"
+  ],
+  "openQuestions": [
+    "当前公司主体和品牌关系是否已核验？",
+    "岗位是否真实存在，汇报关系和团队规模是否与历史信息一致？",
+    "HR 是业务战略角色，还是行政与招聘补位角色？",
+    "岗位的预算、团队和决策权限是否足以完成目标？"
+  ]
+}
