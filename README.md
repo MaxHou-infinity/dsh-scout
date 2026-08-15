@@ -1,5 +1,7 @@
 # dsh-scout
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Evidence-driven company and job intelligence for DeepSeek Harness.
 
 `dsh-scout` helps an agent answer a concrete question:
