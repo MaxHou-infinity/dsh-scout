@@ -297,7 +297,13 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         if (rawIds.length === 0) throw new Error('No case ids provided')
         const caseIds = [...new Set(rawIds)]
         if (caseIds.length < 2) throw new Error('Comparison requires at least two distinct case ids')
-        const compared = caseIds.map(caseId => requireCase(caseKey(caseId, agentId)))
+        const compared = caseIds.map(caseId => {
+          try {
+            return requireCase(caseKey(caseId, agentId))
+          } catch (error) {
+            throw new Error(`Unknown case: ${caseId} (not found in this agent session)`)
+          }
+        })
         return renderComparison(compared)
       },
     }))

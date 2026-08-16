@@ -666,7 +666,7 @@ export function renderComparison(cases: ScoutCase[]): string {
       claim.impact !== 'informational' && claim.status !== 'verified',
     )).slice(0, 3)
     sections.push(
-      `### ${scoutCase.title}`,
+      `### ${scoutCase.title}（${scoutCase.caseId}）`,
       '',
       '**关键已核验结论**：',
       verified.length ? verified.map(claim => `- ${claim.text}`).join('\n') : '- 暂无已核验结论',

@@ -51,6 +51,8 @@
 ```
 scout_start          创建案例（默认决策 VERIFY）
    │
+scout_ingest         批量登记采集结果（自动推断类型/证据等级）
+   │
 scout_add_source     登记来源（sourceType + evidenceLevel）
    │
 scout_add_claim      添加结论（受证据边界约束）
@@ -59,7 +61,9 @@ scout_verify_identity 用 E3 官方源核验公司主体（可选但强烈建议
    │
 scout_verify_claim   用更强证据把结论提升为 verified（保留历史）
    │
-scout_report         生成 Markdown 尽调报告
+scout_report / scout_questions  生成报告 / 派生面试问题
+   │
+scout_compare        多个案例并排对比（决策/主体/风险/问题）
    │
 scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 ```

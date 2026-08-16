@@ -980,6 +980,8 @@ test('renders a side-by-side comparison of two cases', () => {
   assert.match(report, /## 决策与主体核验对比/)
   assert.match(report, /Company A — HR Head \| VERIFY \| ✅ 已核验/)
   assert.match(report, /Company B — HR Head \| VERIFY \| ⚠️ 待核验/)
+  assert.match(report, /### Company A — HR Head（a）/)
+  assert.match(report, /### Company B — HR Head（b）/)
   assert.match(report, /Company A pays 30k\./)
   assert.match(report, /Company B has a legal risk\./)
   assert.match(report, /## 面试问题（合并去重，前 12 条）/)
@@ -1041,6 +1043,11 @@ test('scout_compare deduplicates case ids and empty claims render cleanly', asyn
   await assert.rejects(
     compare.execute({ caseIds: ' , ' }, { agent: { id: 'session-a' } }),
     /No case ids provided/,
+  )
+  // missing case -> error hints at the agent session boundary
+  await assert.rejects(
+    compare.execute({ caseIds: 'a, missing' }, { agent: { id: 'session-a' } }),
+    /Unknown case: missing \(not found in this agent session\)/,
   )
 
   // empty claims render without an empty parentheses suffix
