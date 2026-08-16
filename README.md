@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 23 passing](https://img.shields.io/badge/tests-23%20passing-green)](tests/model.test.mjs)
+[![tests 24 passing](https://img.shields.io/badge/tests-24%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -124,7 +124,7 @@ dsh --profile scout-demo --dump-config   # 验证工具挂载
 ```
 
 - `scoutDir` 未配置时，`scout_export` 省略 `targetDir` 会写到 `./dsh-scout/<caseId>/`；
-- `autoPersist: true` 时，每次 `scout_start` / `scout_add_source` / `scout_add_claim` / `scout_verify_*` 后自动落盘；写失败不影响主流程。
+- `autoPersist: true` 时，每次 `scout_start` / `scout_add_source` / `scout_ingest` / `scout_add_claim` / `scout_verify_*` 后自动落盘；写失败不影响主流程。
 
 ## 数据持久化（v0.2 / v0.3）
 
@@ -153,7 +153,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 23 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
+pnpm test        # 24 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
 pnpm run check:release
 ```
 

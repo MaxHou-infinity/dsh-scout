@@ -70,14 +70,13 @@ const IDENTITY_SOURCE_TYPES = new Set<SourceType>([
 ])
 
 const JOB_PLATFORM_HOST_HINTS = [
-  'liepin',
-  'zhipin',
-  'boss',
-  '51job',
-  'zhaopin',
-  'quanzhi',
-  'nowcoder',
-  'jobs.feishu',
+  'liepin.com',
+  'zhipin.com',
+  '51job.com',
+  'zhaopin.com',
+  'quanzhi.com',
+  'nowcoder.com',
+  'jobs.feishu.cn',
 ]
 
 const AUTHORITY_HOST_SUFFIXES = [
@@ -228,12 +227,14 @@ export function inferSourceType(
   if (explicit) return { type: explicit, inferred: false }
   if (url) {
     try {
-      const hostname = new URL(url).hostname.toLowerCase()
-      if (JOB_PLATFORM_HOST_HINTS.some(hint => hostname.includes(hint))) {
-        return { type: 'job_posting', inferred: true }
-      }
+      const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, '')
+      // Trusted authority origins (official registry/regulator) take priority.
       if (isTrustedAuthorityUrl(url)) {
         return { type: hostname.includes('gsxt') ? 'company_registry' : 'regulator', inferred: true }
+      }
+      // Exact host or subdomain match for known job platforms (no substring false positives).
+      if (JOB_PLATFORM_HOST_HINTS.some(hint => hostname === hint || hostname.endsWith(`.${hint}`))) {
+        return { type: 'job_posting', inferred: true }
       }
     } catch {
       // fall through to 'other'

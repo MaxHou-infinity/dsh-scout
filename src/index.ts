@@ -206,15 +206,36 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         const added: Array<Record<string, unknown>> = []
         const errors: Array<{ url: string; error: string }> = []
         let nextId = (scoutCase.sources.length ?? 0) + 1
-        for (const item of items) {
-          const url = typeof item.url === 'string' ? item.url.trim() : ''
-          if (!url) {
-            errors.push({ url: String(item.url ?? ''), error: 'url is required' })
-            continue
-          }
+        for (const rawItem of items) {
+          const itemUrl = () =>
+            rawItem && typeof rawItem === 'object' && typeof (rawItem as Record<string, unknown>).url === 'string'
+              ? ((rawItem as Record<string, unknown>).url as string)
+              : String((rawItem as Record<string, unknown> | null)?.url ?? rawItem ?? '')
           try {
-            const explicitType = SOURCE_TYPES.includes(item.sourceType as SourceType) ? item.sourceType as SourceType : undefined
-            const explicitLevel = EVIDENCE_LEVELS.includes(item.evidenceLevel as EvidenceLevel) ? item.evidenceLevel as EvidenceLevel : undefined
+            if (!rawItem || typeof rawItem !== 'object') {
+              errors.push({ url: String(rawItem ?? ''), error: 'item must be an object' })
+              continue
+            }
+            const item = rawItem as Record<string, unknown>
+            const url = typeof item.url === 'string' ? item.url.trim() : ''
+            if (!url) {
+              errors.push({ url: String(item.url ?? ''), error: 'url is required' })
+              continue
+            }
+            const explicitType = typeof item.sourceType === 'string' && SOURCE_TYPES.includes(item.sourceType as SourceType)
+              ? item.sourceType as SourceType
+              : undefined
+            const explicitLevel = typeof item.evidenceLevel === 'string' && EVIDENCE_LEVELS.includes(item.evidenceLevel as EvidenceLevel)
+              ? item.evidenceLevel as EvidenceLevel
+              : undefined
+            if (item.sourceType !== undefined && item.sourceType !== null && !explicitType) {
+              errors.push({ url, error: `invalid sourceType: ${String(item.sourceType)}` })
+              continue
+            }
+            if (item.evidenceLevel !== undefined && item.evidenceLevel !== null && !explicitLevel) {
+              errors.push({ url, error: `invalid evidenceLevel: ${String(item.evidenceLevel)}` })
+              continue
+            }
             const typeGuess = inferSourceType(url, explicitType)
             const levelGuess = inferEvidenceLevel(url, typeGuess.type, explicitLevel)
             let sourceId = `src-${nextId}`
@@ -235,6 +256,9 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
             }
             scoutCase = recordEvent(addSource(scoutCase, source), 'source_added', {
               sourceId: source.sourceId,
+              type: source.type,
+              title: source.title,
+              url: source.url,
               evidenceLevel: source.evidenceLevel,
               ingested: true,
             })
@@ -247,7 +271,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
               inferred: { type: typeGuess.inferred, evidenceLevel: levelGuess.inferred },
             })
           } catch (error) {
-            errors.push({ url, error: error instanceof Error ? error.message : String(error) })
+            errors.push({ url: itemUrl(), error: error instanceof Error ? error.message : String(error) })
           }
         }
         scoutCase = await maybePersist(scoutCase)

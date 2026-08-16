@@ -893,3 +893,48 @@ test('scout_ingest batch-registers sources with inference and isolates errors', 
   assert.match(report, /src-3/)
   assert.doesNotMatch(report, /src-4/)
 })
+
+test('scout_ingest isolates null items and invalid explicit enums, and avoids substring false positives', async () => {
+  // substring false positives are gone
+  assert.deepEqual(inferSourceType('https://notaboss.example.com/'), { type: 'other', inferred: true })
+  assert.deepEqual(inferSourceType('https://www.zhipin.com/job/1.html'), { type: 'job_posting', inferred: true })
+  assert.deepEqual(inferSourceType('https://bambulab.jobs.feishu.cn/position/1'), { type: 'job_posting', inferred: true })
+  assert.deepEqual(inferSourceType('https://www.liepin.com/job/1.shtml'), { type: 'job_posting', inferred: true })
+
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'robust', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_ingest').execute({
+    caseId: 'robust',
+    itemsJson: JSON.stringify([
+      null,
+      { url: 'https://m.liepin.com/job/1.shtml' },
+      { url: 'https://www.gsxt.gov.cn/registry/1' },
+      { url: 'https://example.com/x', sourceType: 'regulatory_typo' },
+      { url: 'https://example.com/y', evidenceLevel: 'E9' },
+    ]),
+  }, { agent: { id: 'session-a' } }))
+
+  // null item and invalid explicit enums are isolated; valid items still registered
+  assert.equal(result.added.length, 2)
+  assert.equal(result.errors.length, 3)
+  assert.equal(result.errors[0].error, 'item must be an object')
+  assert.match(result.errors[1].error, /invalid sourceType/)
+  assert.match(result.errors[2].error, /invalid evidenceLevel/)
+  assert.equal(result.added[0].type, 'job_posting')
+  assert.equal(result.added[1].type, 'company_registry')
+  assert.equal(result.added[1].evidenceLevel, 'E3')
+
+  // the previously added sources survive the batch
+  const report = await tools.get('scout_report').execute({ caseId: 'robust' }, { agent: { id: 'session-a' } })
+  assert.match(report, /src-1/)
+  assert.match(report, /src-2/)
+  assert.doesNotMatch(report, /src-3/)
+})

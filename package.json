@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "cordis.patch.yml",
+    "scripts",
     "README.md",
     "LICENSE",
     "docs",
