@@ -706,3 +706,51 @@ test('scout_questions tool returns the derived question list', async () => {
   assert.ok(Array.isArray(result))
   assert.ok(result.length >= 5)
 })
+
+test('auto-persist and default export dir degrade gracefully without fs or scoutDir', async () => {
+  // autoPersist enabled but no fs service: mutations still succeed
+  const noFs = []
+  apply({
+    tools: { register(tool) { noFs.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  }, { scoutDir: '/nowhere', autoPersist: true })
+  const startNoFs = new Map(noFs.map(t => [t.name, t])).get('scout_start')
+  const started = JSON.parse(await startNoFs.execute({
+    caseId: 'no-fs',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: '',
+  }, { agent: { id: 'session-a' } }))
+  assert.equal(started.caseId, 'no-fs')
+  assert.ok(started.events?.some(e => e.type === 'case_started'))
+
+  // no scoutDir configured: export without targetDir falls back to ./dsh-scout/<caseId>
+  const registered = []
+  const store = new Map()
+  const mockFs = {
+    async resolve(path) { return { targetKey: path, displayPath: path } },
+    async readText(target) {
+      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
+      return store.get(target.displayPath)
+    },
+    async writeText(target, content) { store.set(target.displayPath, content); return { operation: 'create' } },
+  }
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    fs: mockFs,
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'default-dir',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: '',
+  }, { agent: { id: 'session-a' } })
+  const exported = JSON.parse(await tools.get('scout_export').execute(
+    { caseId: 'default-dir' },
+    { agent: { id: 'session-a' } },
+  ))
+  assert.equal(exported.targetDir, 'dsh-scout/default-dir')
+  assert.ok(store.has('dsh-scout/default-dir/case.json'))
+})

@@ -39,8 +39,8 @@ scout-cases/<case-id>/
   case.json
   sources.json
   claims.json
+  events.jsonl
   report.md
-  interview-questions.md
 ```
 
 首版不要求精确的总分。报告必须包含：

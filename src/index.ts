@@ -72,18 +72,28 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
       return { persisted: false, targetDir, error: error instanceof Error ? error.message : String(error) }
     }
   }
-  const recordEvent = (scoutCase: ScoutCase, type: ScoutEvent['type'], detail: Record<string, unknown>) =>
-    appendEvent(scoutCase, {
-      eventId: `evt-${(scoutCase.events?.length ?? 0) + 1}`,
+  const recordEvent = (scoutCase: ScoutCase, type: ScoutEvent['type'], detail: Record<string, unknown>) => {
+    const events = scoutCase.events ?? []
+    let n = events.length + 1
+    let eventId = `evt-${n}`
+    while (events.some(event => event.eventId === eventId)) {
+      n += 1
+      eventId = `evt-${n}`
+    }
+    return appendEvent(scoutCase, {
+      eventId,
       type,
       at: new Date().toISOString(),
       detail,
     })
+  }
   const maybePersist = async (scoutCase: ScoutCase) => {
     if (!config.autoPersist) return scoutCase
-    const result = await persistFiles(scoutCase, caseExportDir(scoutCase.caseId))
+    const targetDir = caseExportDir(scoutCase.caseId)
+    const withEvent = recordEvent(scoutCase, 'case_exported', { targetDir, auto: true })
+    const result = await persistFiles(withEvent, targetDir)
     if (!result.persisted) return scoutCase
-    return recordEvent(scoutCase, 'case_exported', { targetDir: result.targetDir, auto: true })
+    return withEvent
   }
 
   ctx.effect(function* registerScoutTools() {
@@ -118,7 +128,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         })
         nextCase = await maybePersist(nextCase)
         cases.set(key, nextCase)
-        return JSON.stringify(scoutCase, null, 2)
+        return JSON.stringify(nextCase, null, 2)
       },
     }))
 
