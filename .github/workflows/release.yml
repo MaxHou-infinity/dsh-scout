@@ -13,6 +13,8 @@ jobs:
     name: verify + publish
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -40,7 +42,7 @@ jobs:
           files: dsh-scout-*.tgz
           generate_release_notes: true
 
-      - name: Publish to npm (optional; requires the NPM_TOKEN secret)
+      - name: Publish to npm (only when the NPM_TOKEN secret is configured)
         if: env.NPM_TOKEN != ''
         run: npm publish --provenance --access public
         env:
