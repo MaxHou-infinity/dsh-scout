@@ -293,7 +293,10 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
       },
       async execute(args, exec) {
         const agentId = exec.agent?.id
-        const caseIds = args.caseIds.split(',').map(value => value.trim()).filter(Boolean)
+        const rawIds = args.caseIds.split(',').map(value => value.trim()).filter(Boolean)
+        if (rawIds.length === 0) throw new Error('No case ids provided')
+        const caseIds = [...new Set(rawIds)]
+        if (caseIds.length < 2) throw new Error('Comparison requires at least two distinct case ids')
         const compared = caseIds.map(caseId => requireCase(caseKey(caseId, agentId)))
         return renderComparison(compared)
       },

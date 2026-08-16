@@ -1013,3 +1013,41 @@ test('scout_compare tool compares cases and inference rejects invalid explicit e
   assert.match(result, /Company A/)
   assert.match(result, /Company B/)
 })
+
+test('scout_compare deduplicates case ids and empty claims render cleanly', async () => {
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  for (const [caseId, company] of [['a', 'Company A'], ['b', 'Company B']]) {
+    await tools.get('scout_start').execute({
+      caseId, companyName: company, roleTitle: 'HR Head', location: '',
+    }, { agent: { id: 'session-a' } })
+  }
+  const compare = tools.get('scout_compare')
+
+  // duplicate ids are deduplicated: 'a,a,b' -> a, b
+  const deduped = await compare.execute({ caseIds: 'a, a, b' }, { agent: { id: 'session-a' } })
+  assert.match(deduped, /公司\/岗位对比（2 个案例）/)
+
+  // only one distinct id -> explicit error
+  await assert.rejects(
+    compare.execute({ caseIds: 'a, a' }, { agent: { id: 'session-a' } }),
+    /at least two distinct case ids/,
+  )
+  // blank ids -> explicit error
+  await assert.rejects(
+    compare.execute({ caseIds: ' , ' }, { agent: { id: 'session-a' } }),
+    /No case ids provided/,
+  )
+
+  // empty claims render without an empty parentheses suffix
+  const empty = renderComparison([
+    createCase({ caseId: 'x', companyName: 'X', roleTitle: 'R' }),
+    createCase({ caseId: 'y', companyName: 'Y', roleTitle: 'R' }),
+  ])
+  assert.match(empty, /主张 0 条\n/)
+  assert.doesNotMatch(empty, /主张 0 条（）/)
+})

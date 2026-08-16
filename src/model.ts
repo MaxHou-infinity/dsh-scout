@@ -649,7 +649,8 @@ export function renderComparison(cases: ScoutCase[]): string {
     const countsText = Object.entries(counts)
       .map(([status, count]) => `${count} ${CLAIM_STATUS_LABELS[status] ?? status}`)
       .join(' / ')
-    return `- **${scoutCase.title}**：决策 **${scoutCase.decision}**；主体${identity}；主张 ${scoutCase.claims.length} 条（${countsText}）`
+    const countsSuffix = countsText ? `（${countsText}）` : ''
+    return `- **${scoutCase.title}**：决策 **${scoutCase.decision}**；主体${identity}；主张 ${scoutCase.claims.length} 条${countsSuffix}`
   }
   const compareTable = [
     '| 案例 | 决策 | 主体核验 | 主张数 |',
