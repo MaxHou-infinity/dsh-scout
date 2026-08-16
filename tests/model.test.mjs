@@ -1058,3 +1058,55 @@ test('scout_compare deduplicates case ids and empty claims render cleanly', asyn
   assert.match(empty, /主张 0 条\n/)
   assert.doesNotMatch(empty, /主张 0 条（）/)
 })
+
+test('scout_ingest drafts claims from items alongside sources', async () => {
+  // foreign registries classify as company_registry
+  assert.deepEqual(inferSourceType('https://w2.brreg.no/company/1'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://www.handelsregister.de/rp_web/mask.do'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://www1.hkexnews.hk/search/titlesearch.xhtml'), { type: 'company_registry', inferred: true })
+
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'draft', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_ingest').execute({
+    caseId: 'draft',
+    itemsJson: JSON.stringify([
+      {
+        url: 'https://m.liepin.com/job/1.shtml',
+        claim: { text: '该岗位月薪 13k–26k。', dimension: 'financing_and_commercialization', impact: 'material' },
+      },
+      {
+        url: 'https://www.gsxt.gov.cn/registry/1',
+        claim: { text: '主体为深圳某科技有限公司。', dimension: 'identity', status: 'verified', evidenceLevel: 'E3' },
+      },
+      // claim missing dimension -> source kept, claim rejected
+      { url: 'https://example.com/a', claim: { text: 'no dimension' } },
+      // claim evidence level exceeds the E2 source -> claim rejected, source kept
+      { url: 'https://example.com/b', claim: { text: 'overstated', dimension: 'risk', evidenceLevel: 'E3' } },
+    ]),
+  }, { agent: { id: 'session-a' } }))
+
+  assert.equal(result.added.length, 4)
+  assert.equal(result.errors.length, 2)
+  // claim defaults: reported / material / source evidence level
+  assert.deepEqual(result.added[0].claims, ['claim-1'])
+  // verified claim on an E3 registry source is accepted
+  assert.deepEqual(result.added[1].claims, ['claim-2'])
+  // source survived even though its claim was rejected
+  assert.equal(result.added[2].claims, undefined)
+  assert.match(result.errors[0].error, /valid dimension/)
+  assert.match(result.errors[1].error, /exceeds its strongest source/)
+
+  // claims landed in the case with source links and events
+  const report = await tools.get('scout_report').execute({ caseId: 'draft' }, { agent: { id: 'session-a' } })
+  assert.match(report, /该岗位月薪 13k–26k。/)
+  assert.match(report, /主体为深圳某科技有限公司。/)
+  assert.doesNotMatch(report, /no dimension/)
+})

@@ -94,6 +94,17 @@ const AUTHORITY_HOST_SUFFIXES = [
   'neeq.com.cn',
 ] as const
 
+/** Registrar/registry hostnames that map to company_registry rather than regulator. */
+const REGISTRY_HOST_SUFFIXES = [
+  'gsxt.gov.cn',
+  'brreg.no',
+  'handelsregister.de',
+  'hkexnews.hk',
+  'sse.com.cn',
+  'szse.cn',
+  'neeq.com.cn',
+] as const
+
 export interface ScoutSource {
   sourceId: string
   type: SourceType
@@ -230,7 +241,8 @@ export function inferSourceType(
       const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, '')
       // Trusted authority origins (official registry/regulator) take priority.
       if (isTrustedAuthorityUrl(url)) {
-        return { type: hostname.includes('gsxt') ? 'company_registry' : 'regulator', inferred: true }
+        const isRegistry = REGISTRY_HOST_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith(`.${suffix}`))
+        return { type: isRegistry ? 'company_registry' : 'regulator', inferred: true }
       }
       // Exact host or subdomain match for known job platforms (no substring false positives).
       if (JOB_PLATFORM_HOST_HINTS.some(hint => hostname === hint || hostname.endsWith(`.${hint}`))) {

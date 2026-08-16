@@ -22,6 +22,9 @@ import {
   type ScoutCase,
   type ScoutEvent,
   type ScoutSource,
+  type ClaimDimension,
+  type ClaimImpact,
+  type ClaimStatus,
   type EvidenceLevel,
   type SourceType,
   verifyClaim,
@@ -184,7 +187,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
 
     yield ctx.tools.register(defineTool({
       name: 'scout_ingest',
-      description: 'Batch-register collected research results as sources. itemsJson is a JSON array of { url, title?, sourceType?, evidenceLevel? }; source type and evidence level are inferred from the URL when omitted (official registry/regulator origins map to E3, job platforms to job_posting/E2, user-provided to E1, unknown to other/E2). Individual invalid items are reported in errors without aborting the batch.',
+      description: 'Batch-register collected research results as sources, optionally drafting claims from each item. itemsJson is a JSON array of { url, title?, sourceType?, evidenceLevel?, claim? }; claim is { text, dimension, impact?, status?, evidenceLevel? } with status defaulting to reported, impact to material, and evidence level to the source level. Source type and evidence level are inferred from the URL when omitted (official registry/regulator origins map to E3, job platforms to job_posting/E2, user-provided to E1, unknown to other/E2). Individual invalid items or rejected claims are reported in errors without aborting the batch; a failed claim does not undo its already-registered source.',
       parameters: {
         caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
         itemsJson: { type: 'string', required: true, description: 'JSON array of collected source items.' },
@@ -207,6 +210,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         const added: Array<Record<string, unknown>> = []
         const errors: Array<{ url: string; error: string }> = []
         let nextId = (scoutCase.sources.length ?? 0) + 1
+        let nextClaimId = (scoutCase.claims.length ?? 0) + 1
         for (const rawItem of items) {
           const itemUrl = () =>
             rawItem && typeof rawItem === 'object' && typeof (rawItem as Record<string, unknown>).url === 'string'
@@ -263,18 +267,74 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
               evidenceLevel: source.evidenceLevel,
               ingested: true,
             })
-            added.push({
+            const addedEntry: Record<string, unknown> = {
               sourceId,
               title,
               url,
               type: typeGuess.type,
               evidenceLevel: levelGuess.evidenceLevel,
               inferred: { type: typeGuess.inferred, evidenceLevel: levelGuess.inferred },
-            })
+            }
+            const rawClaim = (item as Record<string, unknown>).claim
+            if (rawClaim !== undefined && rawClaim !== null) {
+              if (typeof rawClaim !== 'object') {
+                errors.push({ url, error: 'claim must be an object' })
+              } else {
+                const claimDraft = rawClaim as Record<string, unknown>
+                const text = typeof claimDraft.text === 'string' && claimDraft.text.trim() ? claimDraft.text.trim() : ''
+                const dimension = typeof claimDraft.dimension === 'string' && CLAIM_DIMENSIONS.includes(claimDraft.dimension as ClaimDimension)
+                  ? claimDraft.dimension as ClaimDimension
+                  : undefined
+                const status = typeof claimDraft.status === 'string' && CLAIM_STATUSES.includes(claimDraft.status as ClaimStatus)
+                  ? claimDraft.status as ClaimStatus
+                  : 'reported'
+                const impact = typeof claimDraft.impact === 'string' && CLAIM_IMPACTS.includes(claimDraft.impact as ClaimImpact)
+                  ? claimDraft.impact as ClaimImpact
+                  : 'material'
+                const claimLevel = typeof claimDraft.evidenceLevel === 'string' && EVIDENCE_LEVELS.includes(claimDraft.evidenceLevel as EvidenceLevel)
+                  ? claimDraft.evidenceLevel as EvidenceLevel
+                  : source.evidenceLevel
+                if (!text || !dimension) {
+                  errors.push({ url, error: `claim requires text and a valid dimension${text ? '' : ' (text missing)'}` })
+                } else {
+                  let claimId = `claim-${nextClaimId}`
+                  while (scoutCase.claims.some(claim => claim.claimId === claimId)) {
+                    nextClaimId += 1
+                    claimId = `claim-${nextClaimId}`
+                  }
+                  nextClaimId += 1
+                  try {
+                    scoutCase = recordEvent(addClaim(scoutCase, {
+                      claimId,
+                      text,
+                      status,
+                      evidenceLevel: claimLevel,
+                      dimension,
+                      impact,
+                      sourceIds: [source.sourceId],
+                      confidenceNote: `由采集项自动登记，来源 ${source.sourceId}`,
+                      nextAction: '核验该主张并补充独立来源',
+                    }), 'claim_added', {
+                      claimId,
+                      status,
+                      evidenceLevel: claimLevel,
+                      dimension,
+                      impact,
+                      ingested: true,
+                    })
+                    addedEntry.claims = [claimId]
+                  } catch (error) {
+                    errors.push({ url, error: `claim rejected: ${error instanceof Error ? error.message : String(error)}` })
+                  }
+                }
+              }
+            }
+            added.push(addedEntry)
           } catch (error) {
             errors.push({ url: itemUrl(), error: error instanceof Error ? error.message : String(error) })
           }
         }
+        scoutCase = decideCase(scoutCase)
         scoutCase = await maybePersist(scoutCase)
         cases.set(key, scoutCase)
         return JSON.stringify({ added, errors }, null, 2)
