@@ -1,14 +1,23 @@
-# dsh-scout
+# dsh-scout · 司察（Scout）
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
+[![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
+[![tests 13 passing](https://img.shields.io/badge/tests-13%20passing-green)](tests/model.test.mjs)
+[![English README](https://img.shields.io/badge/README-English-blue)](README.md)
 
-面向 DeepSeek Harness 的证据驱动型公司与岗位情报插件。
+**司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的证据驱动型公司尽调与岗位背调插件（HR tech）。
 
 `dsh-scout` 帮助 Agent 回答一个具体问题：
 
 > 这家公司和这个岗位是否值得进入下一轮？面试中还有哪些事项必须核验？
 
 插件将事实、转述信息、推断、未知项、来源和下一步动作分开管理。在公司主体和高影响结论获得充分证据之前，默认保持谨慎的 `VERIFY` 状态。
+
+## 命名
+
+- **Scout（侦察兵）** —— 在你做出承诺之前，先派出侦察兵去摸清一家公司与一个岗位：背调、尽调、证据收集、面试准备。英文包名与仓库名保持 `dsh-scout` 不变，确保安装引用稳定。
+- **司察（sī-chá）** —— 中文名："司"谐音 scout，"察"取考察、审查、侦察之意，二字点明"证据驱动的公司与岗位尽调"这一核心功能。
 
 ## 当前范围
 
@@ -57,4 +66,4 @@ dsh --profile scout-demo --dump-config
 
 ## 社区
 
-这是一个面向 DeepSeek Harness 的独立社区插件。仓库使用 `dsh-plugin` Topic 供用户发现。
+这是一个面向 DeepSeek Harness 的独立社区插件。仓库使用 `dsh-plugin`、`deepseek-harness`、`due-diligence`、`company-research`、`job-research`、`hr-tech`、`evidence-based` 等 Topic 供用户发现与检索。

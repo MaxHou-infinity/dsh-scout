@@ -1,14 +1,23 @@
-# dsh-scout
+# dsh-scout · 司察 (Scout)
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
+[![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
+[![tests 13 passing](https://img.shields.io/badge/tests-13%20passing-green)](tests/model.test.mjs)
+[![中文 README](https://img.shields.io/badge/README-%E7%AE%80%E4%BD%93%E4%B8%AD%E6%96%87-2ea44f)](README.zh-CN.md)
 
-Evidence-driven company and job intelligence for DeepSeek Harness.
+**司察（Scout）** — evidence-driven company & job due-diligence plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness). 面向 DeepSeek Harness 的证据驱动型公司尽调与岗位背调插件。
 
 `dsh-scout` helps an agent answer a concrete question:
 
 > Is this company and role worth taking to the next round, and what must I verify in the interview?
 
 The plugin keeps facts, reported information, inference, unknowns, sources, and next actions separate. It starts conservatively at `VERIFY` until the company identity and high-impact claims are supported.
+
+## Naming
+
+- **Scout** — a scout is sent ahead to reconnoiter a company and a role before you commit: background check, due diligence, evidence gathering, interview prep. The English package and repository name stays `dsh-scout` for stable install references.
+- **司察** (sī-chá) — 中文名："司"谐音 scout，"察"取考察、审查、侦察之意，二字点明"证据驱动的公司与岗位尽调"这一核心功能。
 
 ## Current scope
 
@@ -57,4 +66,4 @@ See [the product contract](docs/dsh-scout-product-contract.md) for the full MVP 
 
 ## Community
 
-This is an independent community plugin for DeepSeek Harness. The repository uses the `dsh-plugin` topic for discovery.
+This is an independent community plugin for DeepSeek Harness. The repository uses the `dsh-plugin`, `deepseek-harness`, `due-diligence`, `company-research`, `job-research`, `hr-tech`, and `evidence-based` topics for discovery.
