@@ -45,6 +45,24 @@ export type ClaimDimension = typeof CLAIM_DIMENSIONS[number]
 
 export type Decision = 'PROCEED' | 'VERIFY' | 'STOP'
 
+export const EVENT_TYPES = [
+  'case_started',
+  'source_added',
+  'claim_added',
+  'identity_verified',
+  'claim_verified',
+  'case_exported',
+  'case_imported',
+] as const
+export type ScoutEventType = typeof EVENT_TYPES[number]
+
+export interface ScoutEvent {
+  eventId: string
+  type: ScoutEventType
+  at: string
+  detail: Record<string, unknown>
+}
+
 const IDENTITY_SOURCE_TYPES = new Set<SourceType>([
   'company_registry',
   'regulator',
@@ -122,6 +140,7 @@ export interface ScoutCase {
   sources: ScoutSource[]
   claims: ScoutClaim[]
   interviewQuestions: string[]
+  events?: ScoutEvent[]
 }
 
 export function createCase(input: {
@@ -151,6 +170,7 @@ export function createCase(input: {
     decisionReason: '尚未完成公司主体和岗位授权核验。',
     sources: [],
     claims: [],
+    events: [],
     interviewQuestions: [
       '这个岗位在前三个月最重要的业务结果是什么？',
       '该岗位直接向谁汇报，在哪些事项上拥有最终决定权？',
@@ -434,4 +454,81 @@ export function renderReport(scoutCase: ScoutCase): string {
     '> 本报告只表达当前证据边界内的判断，不替代法律、投资或医疗意见。',
     '',
   ].join('\n')
+}
+
+export function appendEvent(scoutCase: ScoutCase, event: ScoutEvent): ScoutCase {
+  const events = scoutCase.events ?? []
+  if (events.some(item => item.eventId === event.eventId)) {
+    throw new Error(`Duplicate event: ${event.eventId}`)
+  }
+  return { ...scoutCase, events: [...events, event] }
+}
+
+export const EXPORT_FILE_NAMES = [
+  'case.json',
+  'sources.json',
+  'claims.json',
+  'events.jsonl',
+  'report.md',
+] as const
+
+/** Serialize a case into the durable five-file export payloads (no I/O). */
+export function exportCaseFiles(scoutCase: ScoutCase): Record<string, string> {
+  const base = {
+    schemaVersion: scoutCase.schemaVersion,
+    caseId: scoutCase.caseId,
+    title: scoutCase.title,
+    language: scoutCase.language,
+    decisionObjective: scoutCase.decisionObjective,
+    subject: scoutCase.subject,
+    role: scoutCase.role,
+    decision: scoutCase.decision,
+    decisionReason: scoutCase.decisionReason,
+    interviewQuestions: scoutCase.interviewQuestions,
+  }
+  const events = scoutCase.events ?? []
+  return {
+    'case.json': `${JSON.stringify(base, null, 2)}\n`,
+    'sources.json': `${JSON.stringify(scoutCase.sources, null, 2)}\n`,
+    'claims.json': `${JSON.stringify(scoutCase.claims, null, 2)}\n`,
+    'events.jsonl': events.length ? `${events.map(event => JSON.stringify(event)).join('\n')}\n` : '',
+    'report.md': renderReport(scoutCase),
+  }
+}
+
+/** Rebuild a case from the five-file export payloads, validating structure. */
+export function importCaseFromFiles(files: Record<string, string>): ScoutCase {
+  const missing = EXPORT_FILE_NAMES.filter(name => !(name in files) && name !== 'report.md')
+  if (missing.length) throw new Error(`Missing export files: ${missing.join(', ')}`)
+  const base = JSON.parse(files['case.json'])
+  if (base.schemaVersion !== 'dsh-scout.case.v0') {
+    throw new Error(`Unsupported schema version: ${base.schemaVersion}`)
+  }
+  if (!base.caseId || !base.subject || !base.role || !Array.isArray(base.interviewQuestions)) {
+    throw new Error('Invalid case.json export')
+  }
+  const sources = JSON.parse(files['sources.json'])
+  const claims = JSON.parse(files['claims.json'])
+  if (!Array.isArray(sources) || !Array.isArray(claims)) {
+    throw new Error('Invalid sources.json or claims.json export')
+  }
+  const events: ScoutEvent[] = files['events.jsonl']?.trim()
+    ? files['events.jsonl'].trim().split('\n').map(line => JSON.parse(line))
+    : []
+  if (!Array.isArray(events)) throw new Error('Invalid events.jsonl export')
+  return {
+    schemaVersion: base.schemaVersion,
+    caseId: base.caseId,
+    title: base.title,
+    language: base.language,
+    decisionObjective: base.decisionObjective,
+    subject: base.subject,
+    role: base.role,
+    decision: base.decision,
+    decisionReason: base.decisionReason,
+    sources,
+    claims,
+    interviewQuestions: base.interviewQuestions,
+    events,
+  }
 }

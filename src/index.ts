@@ -3,22 +3,42 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   addClaim,
   addSource,
+  appendEvent,
   CLAIM_DIMENSIONS,
   CLAIM_IMPACTS,
   CLAIM_STATUSES,
   createCase,
   decideCase,
   EVIDENCE_LEVELS,
+  EXPORT_FILE_NAMES,
+  exportCaseFiles,
+  importCaseFromFiles,
   renderReport,
   SOURCE_TYPES,
   type ScoutCase,
+  type ScoutEvent,
   type ScoutSource,
   verifyClaim,
   verifyIdentity,
 } from './model.js'
 
 export const name = 'dsh-scout'
-export const inject = ['tools']
+export const inject = ['tools', 'fs']
+
+interface ScoutFsTarget {
+  targetKey: string
+  displayPath: string
+}
+interface ScoutFs {
+  resolve(path: string): Promise<ScoutFsTarget>
+  readText(target: ScoutFsTarget, signal?: unknown): Promise<string>
+  writeText(
+    target: ScoutFsTarget,
+    content: string,
+    intent?: unknown,
+    signal?: unknown,
+  ): Promise<{ operation: string }>
+}
 
 export function apply(ctx: Context) {
   const cases = new Map<string, ScoutCase>()
@@ -28,6 +48,14 @@ export function apply(ctx: Context) {
     if (!scoutCase) throw new Error(`Unknown case: ${key.split('::').at(-1)}`)
     return scoutCase
   }
+  const fs = (ctx as unknown as { fs?: ScoutFs }).fs
+  const recordEvent = (scoutCase: ScoutCase, type: ScoutEvent['type'], detail: Record<string, unknown>) =>
+    appendEvent(scoutCase, {
+      eventId: `evt-${(scoutCase.events?.length ?? 0) + 1}`,
+      type,
+      at: new Date().toISOString(),
+      detail,
+    })
 
   ctx.effect(function* registerScoutTools() {
     yield () => cases.clear()
@@ -54,7 +82,11 @@ export function apply(ctx: Context) {
           roleTitle: args.roleTitle,
           location: args.location || undefined,
         })
-        cases.set(key, scoutCase)
+        cases.set(key, recordEvent(scoutCase, 'case_started', {
+          companyName: args.companyName,
+          roleTitle: args.roleTitle,
+          location: args.location || null,
+        }))
         return JSON.stringify(scoutCase, null, 2)
       },
     }))
@@ -92,7 +124,13 @@ export function apply(ctx: Context) {
           confidenceNote: args.confidenceNote,
           nextAction: args.nextAction,
         }))
-        cases.set(key, nextCase)
+        cases.set(key, recordEvent(nextCase, 'claim_added', {
+          claimId: args.claimId,
+          status: args.status,
+          evidenceLevel: args.evidenceLevel,
+          dimension: args.dimension,
+          impact: args.impact,
+        }))
         return JSON.stringify(nextCase, null, 2)
       },
     }))
@@ -110,6 +148,71 @@ export function apply(ctx: Context) {
       async execute(args, exec) {
         const key = caseKey(args.caseId, exec.agent?.id)
         return renderReport(requireCase(key))
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_export',
+      description: 'Persist a dsh-scout case as the durable five-file export (case.json, sources.json, claims.json, events.jsonl, report.md) into a target directory.',
+      parameters: {
+        caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
+        targetDir: { type: 'string', required: true, description: 'Directory path to write the five export files into.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        if (!fs) throw new Error('Filesystem service is unavailable in this host')
+        const key = caseKey(args.caseId, exec.agent?.id)
+        const scoutCase = requireCase(key)
+        const files = exportCaseFiles(scoutCase)
+        const target = await fs.resolve(args.targetDir)
+        const written: string[] = []
+        for (const name of EXPORT_FILE_NAMES) {
+          const fileTarget = await fs.resolve(`${target.displayPath}/${name}`)
+          await fs.writeText(fileTarget, files[name])
+          written.push(name)
+        }
+        const nextCase = recordEvent(scoutCase, 'case_exported', { targetDir: target.displayPath })
+        cases.set(key, nextCase)
+        return JSON.stringify({
+          caseId: args.caseId,
+          targetDir: target.displayPath,
+          files: written,
+        }, null, 2)
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_import',
+      description: 'Restore a dsh-scout case from a five-file export directory, then recompute its decision.',
+      parameters: {
+        caseId: { type: 'string', required: true, description: 'Case identifier to restore; must match the exported case.json.' },
+        sourceDir: { type: 'string', required: true, description: 'Directory path containing the five export files.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        if (!fs) throw new Error('Filesystem service is unavailable in this host')
+        const key = caseKey(args.caseId, exec.agent?.id)
+        const read = async (name: string) => {
+          const target = await fs.resolve(`${args.sourceDir}/${name}`)
+          return fs.readText(target)
+        }
+        const files: Record<string, string> = {}
+        for (const name of ['case.json', 'sources.json', 'claims.json', 'events.jsonl']) {
+          files[name] = await read(name)
+        }
+        const restored = importCaseFromFiles(files)
+        if (restored.caseId !== args.caseId) {
+          throw new Error(`Case id mismatch: export has ${restored.caseId}, requested ${args.caseId}`)
+        }
+        const nextCase = decideCase(recordEvent(restored, 'case_imported', { sourceDir: args.sourceDir }))
+        cases.set(key, nextCase)
+        return JSON.stringify(nextCase, null, 2)
       },
     }))
 
@@ -140,7 +243,10 @@ export function apply(ctx: Context) {
           evidenceLevel: args.evidenceLevel,
           status: 'captured',
         }
-        cases.set(key, addSource(scoutCase, source))
+        cases.set(key, recordEvent(addSource(scoutCase, source), 'source_added', {
+          sourceId: source.sourceId,
+          evidenceLevel: source.evidenceLevel,
+        }))
         return JSON.stringify(source, null, 2)
       },
     }))
@@ -172,7 +278,10 @@ export function apply(ctx: Context) {
           brandRelationship: args.brandRelationship,
           sourceIds: args.sourceIds.split(',').map(value => value.trim()).filter(Boolean),
         }))
-        cases.set(key, nextCase)
+        cases.set(key, recordEvent(nextCase, 'identity_verified', {
+          legalEntity: args.legalEntity,
+          registrationNumber: args.registrationNumber,
+        }))
         return JSON.stringify(nextCase, null, 2)
       },
     }))
@@ -202,7 +311,10 @@ export function apply(ctx: Context) {
           confidenceNote: args.confidenceNote,
           nextAction: args.nextAction,
         }))
-        cases.set(key, nextCase)
+        cases.set(key, recordEvent(nextCase, 'claim_verified', {
+          claimId: args.claimId,
+          evidenceLevel: args.evidenceLevel,
+        }))
         return JSON.stringify(nextCase, null, 2)
       },
     }))

@@ -4,8 +4,11 @@ import { readFileSync } from 'node:fs'
 import {
   addClaim,
   addSource,
+  appendEvent,
   createCase,
   decideCase,
+  exportCaseFiles,
+  importCaseFromFiles,
   renderReport,
   verifyClaim,
   verifyIdentity,
@@ -417,12 +420,14 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
   })
 
   assert.equal(name, 'dsh-scout')
-  assert.deepEqual(inject, ['tools'])
+  assert.deepEqual(inject, ['tools', 'fs'])
   assert.deepEqual(
     registered.map(tool => tool.name).sort(),
     [
       'scout_add_claim',
       'scout_add_source',
+      'scout_export',
+      'scout_import',
       'scout_report',
       'scout_start',
       'scout_verify_claim',
@@ -432,4 +437,141 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
 
   for (const dispose of effects.reverse()) dispose()
   assert.deepEqual(disposed.sort(), registered.map(tool => tool.name).sort())
+})
+
+test('round-trips a case through the five-file export', () => {
+  let scoutCase = createCase({
+    caseId: 'demo',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+  })
+  scoutCase = appendEvent(scoutCase, {
+    eventId: 'evt-1',
+    type: 'case_started',
+    at: '2026-08-16T00:00:00.000Z',
+    detail: { companyName: 'Example Co' },
+  })
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'job-posting',
+    type: 'job_posting',
+    title: 'Example job posting',
+    url: 'https://example.com/job',
+    capturedAt: '2026-08-14T00:00:00.000Z',
+    evidenceLevel: 'E1',
+    status: 'captured',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-1',
+    text: 'The role exists.',
+    status: 'reported',
+    evidenceLevel: 'E1',
+    dimension: 'role_existence',
+    impact: 'blocking',
+    sourceIds: ['job-posting'],
+    confidenceNote: 'The job posting is a company-controlled source.',
+    nextAction: 'Confirm the mandate in the interview.',
+  })
+  scoutCase = decideCase(scoutCase)
+
+  const files = exportCaseFiles(scoutCase)
+  assert.deepEqual(Object.keys(files).sort(), ['case.json', 'claims.json', 'events.jsonl', 'report.md', 'sources.json'])
+  assert.match(files['report.md'], /## Verification checklist/)
+  assert.match(files['events.jsonl'], /"type":"case_started"/)
+
+  const restored = importCaseFromFiles(files)
+  assert.equal(restored.caseId, 'demo')
+  assert.equal(restored.subject.name, 'Example Co')
+  assert.equal(restored.sources[0].sourceId, 'job-posting')
+  assert.equal(restored.claims[0].claimId, 'claim-1')
+  assert.equal(restored.events?.[0].type, 'case_started')
+  assert.equal(restored.decision, 'VERIFY')
+})
+
+test('rejects an incomplete or mismatched export payload', () => {
+  const files = exportCaseFiles(createCase({ caseId: 'demo', companyName: 'Example Co', roleTitle: 'HR Head' }))
+  delete files['sources.json']
+  assert.throws(() => importCaseFromFiles(files), /Missing export files/)
+  const intact = exportCaseFiles(createCase({ caseId: 'demo', companyName: 'Example Co', roleTitle: 'HR Head' }))
+  assert.throws(() => importCaseFromFiles({ ...intact, 'case.json': JSON.stringify({ schemaVersion: 'dsh-scout.case.v1' }) }), /Unsupported schema/)
+})
+
+test('exports and imports a case through the fs-backed tools', async () => {
+  const registered = []
+  const store = new Map()
+  const mockFs = {
+    async resolve(path) {
+      return { targetKey: path, displayPath: path }
+    },
+    async readText(target) {
+      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
+      return store.get(target.displayPath)
+    },
+    async writeText(target, content) {
+      store.set(target.displayPath, content)
+      return { operation: 'create' }
+    },
+  }
+  apply({
+    tools: {
+      register(tool) {
+        registered.push(tool)
+        return () => undefined
+      },
+    },
+    fs: mockFs,
+    effect(execute) {
+      Array.from(execute())
+    },
+  })
+  const tools = new Map(registered.map(tool => [tool.name, tool]))
+  const start = tools.get('scout_start')
+  const addSourceTool = tools.get('scout_add_source')
+  const addClaimTool = tools.get('scout_add_claim')
+  const exportTool = tools.get('scout_export')
+  const importTool = tools.get('scout_import')
+
+  await start.execute({
+    caseId: 'persisted',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: 'Shenzhen',
+  }, { agent: { id: 'session-a' } })
+  await addSourceTool.execute({
+    caseId: 'persisted',
+    sourceId: 'job-posting',
+    sourceType: 'job_posting',
+    title: 'Example job posting',
+    url: 'https://example.com/job',
+    evidenceLevel: 'E1',
+  }, { agent: { id: 'session-a' } })
+  await addClaimTool.execute({
+    caseId: 'persisted',
+    claimId: 'claim-1',
+    text: 'The role exists.',
+    status: 'reported',
+    evidenceLevel: 'E1',
+    dimension: 'role_existence',
+    impact: 'blocking',
+    sourceIds: 'job-posting',
+    confidenceNote: 'The job posting is a company-controlled source.',
+    nextAction: 'Confirm the mandate in the interview.',
+  }, { agent: { id: 'session-a' } })
+
+  const exportResult = JSON.parse(await exportTool.execute({
+    caseId: 'persisted',
+    targetDir: '/tmp/scout-cases/persisted',
+  }, { agent: { id: 'session-a' } }))
+  assert.equal(exportResult.files.length, 5)
+  assert.equal(store.size, 5)
+  assert.ok(store.has('/tmp/scout-cases/persisted/case.json'))
+
+  const importResult = JSON.parse(await importTool.execute({
+    caseId: 'persisted',
+    sourceDir: '/tmp/scout-cases/persisted',
+  }, { agent: { id: 'session-a' } }))
+  assert.equal(importResult.caseId, 'persisted')
+  assert.equal(importResult.sources.length, 1)
+  assert.equal(importResult.claims.length, 1)
+  assert.ok(importResult.events?.some(event => event.type === 'case_imported'))
+  assert.equal(importResult.decision, 'VERIFY')
 })

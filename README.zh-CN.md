@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 13 passing](https://img.shields.io/badge/tests-13%20passing-green)](tests/model.test.mjs)
+[![tests 16 passing](https://img.shields.io/badge/tests-16%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的证据驱动型公司尽调与岗位背调插件（HR tech）。
@@ -29,10 +29,12 @@
 - `scout_verify_identity`：通过 `E3` 来源确认法定主体。
 - `scout_verify_claim`：提升主张的验证状态，同时保留其此前的证据状态。
 - `scout_report`：生成当前 Markdown 报告（证据概况统计、按影响排序的关键证据/风险/角色假设、**待核验清单**、带 URL 的来源清单与面试问题）。
+- `scout_export`：将案例持久化为**五文件导出**（`case.json`、`sources.json`、`claims.json`、`events.jsonl`、`report.md`）写入目标目录。
+- `scout_import`：从五文件导出目录恢复案例，并重新计算其决策。
 
 首个案例夹具是 [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json)。其中的历史材料被刻意标记为 `E1`，不会被视为当前有效的核验依据。
 
-案例状态目前保存在内存中，并按 DSH Agent/会话身份隔离。持久化五文件导出、可配置存储和由 Provider 支持的信息采集是下一阶段的实现内容；本仓库目前并不声称已完成完整产品契约。
+案例状态默认保存在内存中，并按 DSH Agent/会话身份隔离；通过 `scout_export` / `scout_import` 可借助五文件格式（含可回放的 `events.jsonl`）跨会话持久化。可配置存储目录和由 Provider 支持的信息采集是下一阶段的实现内容；本仓库目前并不声称已完成完整产品契约。
 
 ## 开发
 
