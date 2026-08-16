@@ -199,7 +199,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
       async execute(args, exec) {
         const key = caseKey(args.caseId, exec.agent?.id)
         let scoutCase = requireCase(key)
-        let items: Array<{ url?: unknown; title?: unknown; sourceType?: unknown; evidenceLevel?: unknown }>
+        let items: Array<{ url?: unknown; title?: unknown; sourceType?: unknown; evidenceLevel?: unknown; claim?: unknown }>
         try {
           const parsed = JSON.parse(args.itemsJson)
           if (!Array.isArray(parsed)) throw new Error('itemsJson must be a JSON array')
@@ -285,17 +285,26 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
                 const dimension = typeof claimDraft.dimension === 'string' && CLAIM_DIMENSIONS.includes(claimDraft.dimension as ClaimDimension)
                   ? claimDraft.dimension as ClaimDimension
                   : undefined
-                const status = typeof claimDraft.status === 'string' && CLAIM_STATUSES.includes(claimDraft.status as ClaimStatus)
+                const claimIssues: string[] = []
+                const hasStatus = claimDraft.status !== undefined && claimDraft.status !== null
+                const status = hasStatus && typeof claimDraft.status === 'string' && CLAIM_STATUSES.includes(claimDraft.status as ClaimStatus)
                   ? claimDraft.status as ClaimStatus
-                  : 'reported'
-                const impact = typeof claimDraft.impact === 'string' && CLAIM_IMPACTS.includes(claimDraft.impact as ClaimImpact)
+                  : undefined
+                if (hasStatus && !status) claimIssues.push(`invalid claim.status: ${String(claimDraft.status)}`)
+                const hasImpact = claimDraft.impact !== undefined && claimDraft.impact !== null
+                const impact = hasImpact && typeof claimDraft.impact === 'string' && CLAIM_IMPACTS.includes(claimDraft.impact as ClaimImpact)
                   ? claimDraft.impact as ClaimImpact
-                  : 'material'
-                const claimLevel = typeof claimDraft.evidenceLevel === 'string' && EVIDENCE_LEVELS.includes(claimDraft.evidenceLevel as EvidenceLevel)
+                  : undefined
+                if (hasImpact && !impact) claimIssues.push(`invalid claim.impact: ${String(claimDraft.impact)}`)
+                const hasClaimLevel = claimDraft.evidenceLevel !== undefined && claimDraft.evidenceLevel !== null
+                const claimLevel = hasClaimLevel && typeof claimDraft.evidenceLevel === 'string' && EVIDENCE_LEVELS.includes(claimDraft.evidenceLevel as EvidenceLevel)
                   ? claimDraft.evidenceLevel as EvidenceLevel
-                  : source.evidenceLevel
-                if (!text || !dimension) {
-                  errors.push({ url, error: `claim requires text and a valid dimension${text ? '' : ' (text missing)'}` })
+                  : undefined
+                if (hasClaimLevel && !claimLevel) claimIssues.push(`invalid claim.evidenceLevel: ${String(claimDraft.evidenceLevel)}`)
+                if (!text) claimIssues.push('claim.text is required')
+                if (!dimension) claimIssues.push(`invalid claim.dimension: ${String(claimDraft.dimension)}`)
+                if (claimIssues.length) {
+                  errors.push({ url, error: `claim rejected: ${claimIssues.join('; ')}` })
                 } else {
                   let claimId = `claim-${nextClaimId}`
                   while (scoutCase.claims.some(claim => claim.claimId === claimId)) {
@@ -307,19 +316,21 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
                     scoutCase = recordEvent(addClaim(scoutCase, {
                       claimId,
                       text,
-                      status,
-                      evidenceLevel: claimLevel,
-                      dimension,
-                      impact,
+                      status: status ?? 'reported',
+                      evidenceLevel: claimLevel ?? source.evidenceLevel,
+                      dimension: dimension as ClaimDimension,
+                      impact: impact ?? 'material',
                       sourceIds: [source.sourceId],
                       confidenceNote: `由采集项自动登记，来源 ${source.sourceId}`,
                       nextAction: '核验该主张并补充独立来源',
                     }), 'claim_added', {
                       claimId,
-                      status,
-                      evidenceLevel: claimLevel,
-                      dimension,
-                      impact,
+                      status: status ?? 'reported',
+                      evidenceLevel: claimLevel ?? source.evidenceLevel,
+                      dimension: dimension as ClaimDimension,
+                      impact: impact ?? 'material',
+                      text,
+                      sourceIds: [source.sourceId],
                       ingested: true,
                     })
                     addedEntry.claims = [claimId]

@@ -1101,7 +1101,7 @@ test('scout_ingest drafts claims from items alongside sources', async () => {
   assert.deepEqual(result.added[1].claims, ['claim-2'])
   // source survived even though its claim was rejected
   assert.equal(result.added[2].claims, undefined)
-  assert.match(result.errors[0].error, /valid dimension/)
+  assert.match(result.errors[0].error, /invalid claim\.dimension/)
   assert.match(result.errors[1].error, /exceeds its strongest source/)
 
   // claims landed in the case with source links and events
@@ -1109,4 +1109,49 @@ test('scout_ingest drafts claims from items alongside sources', async () => {
   assert.match(report, /该岗位月薪 13k–26k。/)
   assert.match(report, /主体为深圳某科技有限公司。/)
   assert.doesNotMatch(report, /no dimension/)
+})
+
+test('scout_ingest rejects invalid claim enums explicitly and keeps claim ids collision-safe', async () => {
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'enum', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  // pre-seed a claim so the next generated id must skip claim-1
+  await tools.get('scout_add_claim').execute({
+    caseId: 'enum',
+    claimId: 'claim-1',
+    text: 'pre-seeded',
+    status: 'unknown',
+    evidenceLevel: 'E0',
+    dimension: 'risk',
+    impact: 'material',
+    sourceIds: '',
+    confidenceNote: 'none',
+    nextAction: 'verify',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_ingest').execute({
+    caseId: 'enum',
+    itemsJson: JSON.stringify([
+      { url: 'https://m.liepin.com/job/1.shtml', claim: { text: 'ok claim', dimension: 'risk', status: 'contradictedd' } },
+      { url: 'https://m.liepin.com/job/2.shtml', claim: { text: 'bad impact', dimension: 'risk', impact: 'huge' } },
+      { url: 'https://m.liepin.com/job/3.shtml', claim: { text: 'bad level', dimension: 'risk', evidenceLevel: 'E9' } },
+      { url: 'https://m.liepin.com/job/4.shtml', claim: { text: 'good claim', dimension: 'mandate' } },
+    ]),
+  }, { agent: { id: 'session-a' } }))
+
+  // all four sources registered; three claims rejected with explicit enum errors
+  assert.equal(result.added.length, 4)
+  assert.equal(result.errors.length, 3)
+  assert.match(result.errors[0].error, /invalid claim\.status: contradictedd/)
+  assert.match(result.errors[1].error, /invalid claim\.impact: huge/)
+  assert.match(result.errors[2].error, /invalid claim\.evidenceLevel: E9/)
+  // the valid claim skipped the pre-seeded claim-1
+  assert.deepEqual(result.added[3].claims, ['claim-2'])
 })
