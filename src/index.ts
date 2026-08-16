@@ -387,16 +387,25 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         if (!web) throw new Error('Web search service is unavailable in this host')
         const key = caseKey(args.caseId, exec.agent?.id)
         let scoutCase = requireCase(key)
-        const limit = Math.min(Math.max(Math.trunc(args.limit ?? 5) || 5, 1), 10)
+        const parsedLimit = Math.trunc(args.limit ?? 5)
+        const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 10) : 5
         const result = await web.search({ query: args.query, maxResults: limit }, exec.signal)
         const added: Array<Record<string, unknown>> = []
         const errors: Array<{ url: string; error: string }> = []
+        const items = Array.isArray(result.sources) ? result.sources : []
+        if (!Array.isArray(result.sources)) {
+          errors.push({ url: '', error: 'search provider returned a non-array sources field' })
+        }
         let nextId = (scoutCase.sources.length ?? 0) + 1
-        for (const item of result.sources) {
+        items.forEach((item, index) => {
+          if (!item || typeof item !== 'object') {
+            errors.push({ url: '', error: `search result ${index} must be an object` })
+            return
+          }
           const url = typeof item.url === 'string' ? item.url.trim() : ''
           if (!url) {
-            errors.push({ url: '', error: 'search result missing url' })
-            continue
+            errors.push({ url: '', error: `search result ${index} missing url` })
+            return
           }
           try {
             const typeGuess = inferSourceType(url)
@@ -424,18 +433,19 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
               type: typeGuess.type,
               evidenceLevel: levelGuess.evidenceLevel,
               snippet: typeof item.snippet === 'string' ? item.snippet.slice(0, 300) : null,
+              publishedAt: typeof item.publishedAt === 'string' ? item.publishedAt : null,
               inferred: { type: typeGuess.inferred, evidenceLevel: levelGuess.inferred },
             })
           } catch (error) {
             errors.push({ url, error: error instanceof Error ? error.message : String(error) })
           }
-        }
+        })
         scoutCase = decideCase(scoutCase)
         scoutCase = await maybePersist(scoutCase)
         cases.set(key, scoutCase)
         return JSON.stringify({
           query: args.query,
-          truncated: result.truncated,
+          truncated: Boolean(result.truncated),
           added,
           errors,
           content: typeof result.content === 'string' && result.content ? result.content.slice(0, 500) : null,

@@ -1271,3 +1271,86 @@ test('scout_search registers provider results as sources and requires the web se
     /Web search service is unavailable/,
   )
 })
+
+test('scout_search handles provider edge cases and limit bounds', async () => {
+  const registered = []
+  const providerCalls = []
+  let failSearch = false
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    web: {
+      async search(request) {
+        if (failSearch) throw new Error('provider down')
+        providerCalls.push(request)
+        return {
+          sources: [
+            null,
+            { url: 123 },
+            { url: '' },
+            { url: 'https://m.liepin.com/job/1.shtml', publishedAt: '2026-08-16' },
+          ],
+          truncated: undefined,
+        }
+      },
+    },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'edge', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  // limit: 0 / -1 normalize to default 5, 100 caps at 10
+  for (const [limit, expected] of [[0, 5], [-1, 5], [100, 10]]) {
+    await tools.get('scout_search').execute(
+      { caseId: 'edge', query: 'q', limit },
+      { agent: { id: 'session-a' } },
+    )
+  }
+  assert.deepEqual(providerCalls.map(c => c.maxResults), [5, 5, 10])
+  // NaN is rejected by the tool-layer argument validation
+  await assert.rejects(
+    tools.get('scout_search').execute({ caseId: 'edge', query: 'q', limit: NaN }, { agent: { id: 'session-a' } }),
+    /finite JSON number/,
+  )
+
+  // malformed sources are isolated; valid ones register with publishedAt
+  const result = JSON.parse(await tools.get('scout_search').execute(
+    { caseId: 'edge', query: 'q' },
+    { agent: { id: 'session-a' } },
+  ))
+  assert.equal(result.errors.length, 3)
+  assert.match(result.errors[0].error, /result 0 must be an object/)
+  assert.match(result.errors[1].error, /result 1 missing url/)
+  assert.match(result.errors[2].error, /result 2 missing url/)
+  assert.equal(result.added.length, 1)
+  assert.equal(result.added[0].type, 'job_posting')
+  assert.equal(result.added[0].publishedAt, '2026-08-16')
+  // truncated missing -> false, never dropped from the payload
+  assert.equal(result.truncated, false)
+
+  // provider throwing -> tool rejects with the provider error
+  failSearch = true
+  await assert.rejects(
+    tools.get('scout_search').execute({ caseId: 'edge', query: 'q' }, { agent: { id: 'session-a' } }),
+    /provider down/,
+  )
+
+  // non-array sources -> reported as an error, tool still succeeds
+  const noArray = []
+  apply({
+    tools: { register(tool) { noArray.push(tool); return () => undefined } },
+    web: { async search() { return { sources: 'nope' } } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools2 = new Map(noArray.map(t => [t.name, t]))
+  await tools2.get('scout_start').execute({
+    caseId: 'na', companyName: 'C', roleTitle: 'R', location: '',
+  }, { agent: { id: 'session-a' } })
+  const nonArray = JSON.parse(await tools2.get('scout_search').execute(
+    { caseId: 'na', query: 'q' },
+    { agent: { id: 'session-a' } },
+  ))
+  assert.equal(nonArray.added.length, 0)
+  assert.match(nonArray.errors[0].error, /non-array sources/)
+})
