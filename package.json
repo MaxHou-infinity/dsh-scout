@@ -10,10 +10,10 @@
     "dist",
     "cordis.patch.yml",
     "README.md",
-    "README.zh-CN.md",
     "LICENSE",
     "docs",
-    "tests"
+    "tests",
+    "README.en.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
