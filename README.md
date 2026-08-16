@@ -1,5 +1,6 @@
 # dsh-scout · 司察（Scout）
 
+[![ci](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
