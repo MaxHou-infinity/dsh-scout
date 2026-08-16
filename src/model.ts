@@ -530,35 +530,48 @@ export function exportCaseFiles(scoutCase: ScoutCase): Record<string, string> {
 export function importCaseFromFiles(files: Record<string, string>): ScoutCase {
   const missing = EXPORT_FILE_NAMES.filter(name => !(name in files) && name !== 'report.md')
   if (missing.length) throw new Error(`Missing export files: ${missing.join(', ')}`)
-  const base = JSON.parse(files['case.json'])
+  const parseJson = (name: string): unknown => {
+    try {
+      return JSON.parse(files[name])
+    } catch (error) {
+      throw new Error(`Invalid ${name}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const base = parseJson('case.json') as Record<string, unknown>
   if (base.schemaVersion !== 'dsh-scout.case.v0') {
-    throw new Error(`Unsupported schema version: ${base.schemaVersion}`)
+    throw new Error(`Unsupported schema version: ${String(base.schemaVersion)}`)
   }
   if (!base.caseId || !base.subject || !base.role || !Array.isArray(base.interviewQuestions)) {
     throw new Error('Invalid case.json export')
   }
-  const sources = JSON.parse(files['sources.json'])
-  const claims = JSON.parse(files['claims.json'])
+  const sources = parseJson('sources.json')
+  const claims = parseJson('claims.json')
   if (!Array.isArray(sources) || !Array.isArray(claims)) {
     throw new Error('Invalid sources.json or claims.json export')
+  }
+  if (!sources.every(item => item && typeof item.sourceId === 'string' && typeof item.title === 'string')) {
+    throw new Error('Invalid source entry in sources.json')
+  }
+  if (!claims.every(item => item && typeof item.claimId === 'string' && typeof item.text === 'string' && typeof item.nextAction === 'string')) {
+    throw new Error('Invalid claim entry in claims.json')
   }
   const events: ScoutEvent[] = files['events.jsonl']?.trim()
     ? files['events.jsonl'].trim().split('\n').map(line => JSON.parse(line))
     : []
   if (!Array.isArray(events)) throw new Error('Invalid events.jsonl export')
   return {
-    schemaVersion: base.schemaVersion,
-    caseId: base.caseId,
-    title: base.title,
-    language: base.language,
-    decisionObjective: base.decisionObjective,
-    subject: base.subject,
-    role: base.role,
-    decision: base.decision,
-    decisionReason: base.decisionReason,
-    sources,
-    claims,
-    interviewQuestions: base.interviewQuestions,
+    schemaVersion: base.schemaVersion as 'dsh-scout.case.v0',
+    caseId: base.caseId as string,
+    title: base.title as string,
+    language: base.language as string,
+    decisionObjective: base.decisionObjective as string,
+    subject: base.subject as ScoutCase['subject'],
+    role: base.role as ScoutCase['role'],
+    decision: base.decision as Decision,
+    decisionReason: base.decisionReason as string,
+    sources: sources as ScoutSource[],
+    claims: claims as ScoutClaim[],
+    interviewQuestions: base.interviewQuestions as string[],
     events,
   }
 }

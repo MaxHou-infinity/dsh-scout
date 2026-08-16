@@ -305,7 +305,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         })
         nextCase = await maybePersist(nextCase)
         cases.set(key, nextCase)
-        return JSON.stringify(source, null, 2)
+        return JSON.stringify(nextCase, null, 2)
       },
     }))
 

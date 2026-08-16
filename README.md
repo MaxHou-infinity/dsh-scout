@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 20 passing](https://img.shields.io/badge/tests-20%20passing-green)](tests/model.test.mjs)
+[![tests 21 passing](https://img.shields.io/badge/tests-21%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -98,7 +98,7 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 | `scout_verify_identity` | 用 E3 官方源核验法定主体 |
 | `scout_verify_claim` | 用更强证据提升主张为 verified |
 | `scout_report` | 渲染当前 Markdown 报告 |
-| `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单 |
+| `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单（上限 12 条） |
 | `scout_export` | 持久化五文件导出（case/sources/claims/events/report） |
 | `scout_import` | 从导出目录恢复案例并重算决策 |
 
@@ -152,7 +152,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 20 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
+pnpm test        # 21 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
 pnpm run check:release
 ```
 

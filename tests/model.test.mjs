@@ -10,6 +10,7 @@ import {
   exportCaseFiles,
   generateInterviewQuestions,
   importCaseFromFiles,
+  isTrustedAuthorityUrl,
   renderReport,
   verifyClaim,
   verifyIdentity,
@@ -753,4 +754,75 @@ test('auto-persist and default export dir degrade gracefully without fs or scout
   ))
   assert.equal(exported.targetDir, 'dsh-scout/default-dir')
   assert.ok(store.has('dsh-scout/default-dir/case.json'))
+})
+
+test('covers question-generation, duplicate-id, authority-url, and import edge cases', () => {
+  // empty case: 3 missing-dimension questions + 5 defaults = 8
+  const empty = createCase({ caseId: 'e', companyName: 'C', roleTitle: 'R' })
+  assert.equal(generateInterviewQuestions(empty).length, 8)
+
+  // fully verified role dimensions: only the 5 defaults remain
+  let verifiedCase = createCase({ caseId: 'v', companyName: 'C', roleTitle: 'R' })
+  verifiedCase = addSource(verifiedCase, {
+    sourceId: 's1', type: 'user_provided', title: 'notes', url: null,
+    capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+  })
+  for (const [claimId, dimension] of [
+    ['role', 'role_existence'], ['reporting', 'reporting_line'], ['mandate', 'mandate'],
+  ]) {
+    verifiedCase = addClaim(verifiedCase, {
+      claimId, text: 'confirmed', status: 'verified', evidenceLevel: 'E1', dimension,
+      impact: 'blocking', sourceIds: ['s1'], confidenceNote: 'direct', nextAction: 'done',
+    })
+  }
+  const verifiedQuestions = generateInterviewQuestions(verifiedCase)
+  assert.equal(verifiedQuestions.length, 5)
+
+  // blank nextAction is filtered and the 12-item cap truncates
+  let capped = createCase({ caseId: 'c', companyName: 'C', roleTitle: 'R' })
+  capped = addSource(capped, {
+    sourceId: 's1', type: 'user_provided', title: 'notes', url: null,
+    capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+  })
+  for (let i = 0; i < 20; i += 1) {
+    capped = addClaim(capped, {
+      claimId: `c${i}`, text: `pending ${i}`, status: 'reported', evidenceLevel: 'E1',
+      dimension: 'risk', impact: 'material', sourceIds: ['s1'],
+      confidenceNote: 'media', nextAction: i === 0 ? '   ' : `action ${i}`,
+    })
+  }
+  const cappedQuestions = generateInterviewQuestions(capped)
+  assert.equal(cappedQuestions.length, 12)
+  assert.ok(!cappedQuestions.some(q => q.trim() === '   '))
+
+  // duplicate ids are rejected at the model layer (pure functions return new cases)
+  let dup = createCase({ caseId: 'd', companyName: 'C', roleTitle: 'R' })
+  const source = {
+    sourceId: 's1', type: 'job_posting', title: 'posting', url: null,
+    capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+  }
+  dup = addSource(dup, source)
+  assert.throws(() => addSource(dup, source), /Duplicate source/)
+  const claim = {
+    claimId: 'c1', text: 'x', status: 'unknown', evidenceLevel: 'E0', dimension: 'risk',
+    impact: 'material', sourceIds: [], confidenceNote: '', nextAction: '',
+  }
+  dup = addClaim(dup, claim)
+  assert.throws(() => addClaim(dup, claim), /Duplicate claim/)
+  const event = { eventId: 'evt-1', type: 'case_started', at: '2026-08-16T00:00:00.000Z', detail: {} }
+  dup = appendEvent(dup, event)
+  assert.throws(() => appendEvent(dup, event), /Duplicate event/)
+
+  // trusted-authority URL rejections
+  assert.equal(isTrustedAuthorityUrl('http://www.gsxt.gov.cn/'), false)
+  assert.equal(isTrustedAuthorityUrl('https://www.gsxt.gov.cn:8080/'), false)
+  assert.equal(isTrustedAuthorityUrl('https://user:pass@www.gsxt.gov.cn/'), false)
+  assert.equal(isTrustedAuthorityUrl('https://example.com/'), false)
+  assert.equal(isTrustedAuthorityUrl(null), false)
+  assert.equal(isTrustedAuthorityUrl('https://www.gsxt.gov.cn/'), true)
+
+  // import rejects malformed claim entries and wraps JSON syntax errors
+  const files = exportCaseFiles(createCase({ caseId: 'x', companyName: 'C', roleTitle: 'R' }))
+  assert.throws(() => importCaseFromFiles({ ...files, 'claims.json': JSON.stringify([{ claimId: 'c1' }]) }), /Invalid claim entry/)
+  assert.throws(() => importCaseFromFiles({ ...files, 'case.json': '{not json' }), /Invalid case\.json/)
 })
