@@ -69,6 +69,17 @@ const IDENTITY_SOURCE_TYPES = new Set<SourceType>([
   'official_filing',
 ])
 
+const JOB_PLATFORM_HOST_HINTS = [
+  'liepin',
+  'zhipin',
+  'boss',
+  '51job',
+  'zhaopin',
+  'quanzhi',
+  'nowcoder',
+  'jobs.feishu',
+]
+
 const AUTHORITY_HOST_SUFFIXES = [
   'gov',
   'gov.cn',
@@ -207,6 +218,44 @@ export function isTrustedAuthorityUrl(value: string | null): boolean {
   } catch {
     return false
   }
+}
+
+/** Guess a source category from its URL when the caller did not provide one. */
+export function inferSourceType(
+  url: string | null,
+  explicit?: SourceType,
+): { type: SourceType; inferred: boolean } {
+  if (explicit) return { type: explicit, inferred: false }
+  if (url) {
+    try {
+      const hostname = new URL(url).hostname.toLowerCase()
+      if (JOB_PLATFORM_HOST_HINTS.some(hint => hostname.includes(hint))) {
+        return { type: 'job_posting', inferred: true }
+      }
+      if (isTrustedAuthorityUrl(url)) {
+        return { type: hostname.includes('gsxt') ? 'company_registry' : 'regulator', inferred: true }
+      }
+    } catch {
+      // fall through to 'other'
+    }
+  }
+  return { type: 'other', inferred: true }
+}
+
+/** Guess an evidence level from the URL and category when not provided explicitly. */
+export function inferEvidenceLevel(
+  url: string | null,
+  type: SourceType,
+  explicit?: EvidenceLevel,
+): { evidenceLevel: EvidenceLevel; inferred: boolean } {
+  if (explicit) return { evidenceLevel: explicit, inferred: false }
+  if (IDENTITY_SOURCE_TYPES.has(type) && isTrustedAuthorityUrl(url)) {
+    return { evidenceLevel: 'E3', inferred: true }
+  }
+  if (type === 'user_provided') {
+    return { evidenceLevel: 'E1', inferred: true }
+  }
+  return { evidenceLevel: 'E2', inferred: true }
 }
 
 export function addClaim(scoutCase: ScoutCase, claim: ScoutClaim): ScoutCase {

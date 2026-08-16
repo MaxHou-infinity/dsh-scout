@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 21 passing](https://img.shields.io/badge/tests-21%20passing-green)](tests/model.test.mjs)
+[![tests 23 passing](https://img.shields.io/badge/tests-23%20passing-green)](tests/model.test.mjs)
 [![中文 README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-2ea44f)](README.md)
 
 **司察（Scout）** — evidence-driven company & job due-diligence plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness).
@@ -25,6 +25,7 @@ This repository contains the first runnable, session-isolated slice:
 
 - `scout_start`: create an in-memory diligence case.
 - `scout_add_source`: register a source.
+- `scout_ingest`: batch-register collected research results (auto-infers source type and evidence level per URL; individual failures are isolated without aborting the batch).
 - `scout_add_claim`: attach an evidence-bounded claim.
 - `scout_verify_identity`: confirm the legal entity from an `E3` source.
 - `scout_verify_claim`: promote a claim while retaining its prior evidence state.
@@ -35,7 +36,7 @@ This repository contains the first runnable, session-isolated slice:
 
 The first case fixture is [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json). Its historical material is deliberately marked as `E1` and is not treated as current verification.
 
-Case state lives in memory by default and is isolated by DSH agent/session identity; `scout_export` / `scout_import` make a case durable across sessions through the five-file format with a replayable `events.jsonl`. Configurable storage is available via plugin config (`scoutDir` / `autoPersist`); provider-backed collection is the next implementation slice. This repository does not yet claim the full product contract is complete.
+Case state lives in memory by default and is isolated by DSH agent/session identity; `scout_export` / `scout_import` make a case durable across sessions through the five-file format with a replayable `events.jsonl`. Configurable storage is available via plugin config (`scoutDir` / `autoPersist`); `scout_ingest` handles batch source registration from collected search/page results. Deeper provider-backed collection is the next implementation slice. This repository does not yet claim the full product contract is complete.
 
 ## Development
 

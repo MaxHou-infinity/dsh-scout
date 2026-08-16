@@ -14,11 +14,15 @@ import {
   exportCaseFiles,
   generateInterviewQuestions,
   importCaseFromFiles,
+  inferEvidenceLevel,
+  inferSourceType,
   renderReport,
   SOURCE_TYPES,
   type ScoutCase,
   type ScoutEvent,
   type ScoutSource,
+  type EvidenceLevel,
+  type SourceType,
   verifyClaim,
   verifyIdentity,
 } from './model.js'
@@ -174,6 +178,81 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         nextCase = await maybePersist(nextCase)
         cases.set(key, nextCase)
         return JSON.stringify(nextCase, null, 2)
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_ingest',
+      description: 'Batch-register collected research results as sources. itemsJson is a JSON array of { url, title?, sourceType?, evidenceLevel? }; source type and evidence level are inferred from the URL when omitted (official registry/regulator origins map to E3, job platforms to job_posting/E2, user-provided to E1, unknown to other/E2). Individual invalid items are reported in errors without aborting the batch.',
+      parameters: {
+        caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
+        itemsJson: { type: 'string', required: true, description: 'JSON array of collected source items.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        const key = caseKey(args.caseId, exec.agent?.id)
+        let scoutCase = requireCase(key)
+        let items: Array<{ url?: unknown; title?: unknown; sourceType?: unknown; evidenceLevel?: unknown }>
+        try {
+          const parsed = JSON.parse(args.itemsJson)
+          if (!Array.isArray(parsed)) throw new Error('itemsJson must be a JSON array')
+          items = parsed
+        } catch (error) {
+          throw new Error(`Invalid itemsJson: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        const added: Array<Record<string, unknown>> = []
+        const errors: Array<{ url: string; error: string }> = []
+        let nextId = (scoutCase.sources.length ?? 0) + 1
+        for (const item of items) {
+          const url = typeof item.url === 'string' ? item.url.trim() : ''
+          if (!url) {
+            errors.push({ url: String(item.url ?? ''), error: 'url is required' })
+            continue
+          }
+          try {
+            const explicitType = SOURCE_TYPES.includes(item.sourceType as SourceType) ? item.sourceType as SourceType : undefined
+            const explicitLevel = EVIDENCE_LEVELS.includes(item.evidenceLevel as EvidenceLevel) ? item.evidenceLevel as EvidenceLevel : undefined
+            const typeGuess = inferSourceType(url, explicitType)
+            const levelGuess = inferEvidenceLevel(url, typeGuess.type, explicitLevel)
+            let sourceId = `src-${nextId}`
+            while (scoutCase.sources.some(source => source.sourceId === sourceId)) {
+              nextId += 1
+              sourceId = `src-${nextId}`
+            }
+            nextId += 1
+            const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : url
+            const source: ScoutSource = {
+              sourceId,
+              type: typeGuess.type,
+              title,
+              url,
+              capturedAt: new Date().toISOString(),
+              evidenceLevel: levelGuess.evidenceLevel,
+              status: 'captured',
+            }
+            scoutCase = recordEvent(addSource(scoutCase, source), 'source_added', {
+              sourceId: source.sourceId,
+              evidenceLevel: source.evidenceLevel,
+              ingested: true,
+            })
+            added.push({
+              sourceId,
+              title,
+              url,
+              type: typeGuess.type,
+              evidenceLevel: levelGuess.evidenceLevel,
+              inferred: { type: typeGuess.inferred, evidenceLevel: levelGuess.inferred },
+            })
+          } catch (error) {
+            errors.push({ url, error: error instanceof Error ? error.message : String(error) })
+          }
+        }
+        scoutCase = await maybePersist(scoutCase)
+        cases.set(key, scoutCase)
+        return JSON.stringify({ added, errors }, null, 2)
       },
     }))
 

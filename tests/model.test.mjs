@@ -10,6 +10,8 @@ import {
   exportCaseFiles,
   generateInterviewQuestions,
   importCaseFromFiles,
+  inferEvidenceLevel,
+  inferSourceType,
   isTrustedAuthorityUrl,
   renderReport,
   verifyClaim,
@@ -430,6 +432,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
       'scout_add_source',
       'scout_export',
       'scout_import',
+      'scout_ingest',
       'scout_questions',
       'scout_report',
       'scout_start',
@@ -825,4 +828,68 @@ test('covers question-generation, duplicate-id, authority-url, and import edge c
   const files = exportCaseFiles(createCase({ caseId: 'x', companyName: 'C', roleTitle: 'R' }))
   assert.throws(() => importCaseFromFiles({ ...files, 'claims.json': JSON.stringify([{ claimId: 'c1' }]) }), /Invalid claim entry/)
   assert.throws(() => importCaseFromFiles({ ...files, 'case.json': '{not json' }), /Invalid case\.json/)
+})
+
+test('infers source type and evidence level from URLs', () => {
+  // official registry/regulator origins
+  assert.deepEqual(inferSourceType('https://www.gsxt.gov.cn/foo'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://example.gov.cn/'), { type: 'regulator', inferred: true })
+  assert.deepEqual(inferEvidenceLevel('https://www.gsxt.gov.cn/foo', 'company_registry'), { evidenceLevel: 'E3', inferred: true })
+  // job platforms
+  assert.deepEqual(inferSourceType('https://m.liepin.com/job/1.shtml'), { type: 'job_posting', inferred: true })
+  assert.deepEqual(inferEvidenceLevel('https://m.liepin.com/job/1.shtml', 'job_posting'), { evidenceLevel: 'E2', inferred: true })
+  // unknown origins
+  assert.deepEqual(inferSourceType('https://example.com/article'), { type: 'other', inferred: true })
+  assert.deepEqual(inferEvidenceLevel('https://example.com/article', 'other'), { evidenceLevel: 'E2', inferred: true })
+  // user-provided
+  assert.deepEqual(inferEvidenceLevel(null, 'user_provided'), { evidenceLevel: 'E1', inferred: true })
+  // explicit values win and are not marked inferred
+  assert.deepEqual(inferSourceType('https://example.com/', 'independent_media'), { type: 'independent_media', inferred: false })
+  assert.deepEqual(inferEvidenceLevel('https://example.com/', 'job_posting', 'E1'), { evidenceLevel: 'E1', inferred: false })
+})
+
+test('scout_ingest batch-registers sources with inference and isolates errors', async () => {
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'ingest',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: '',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_ingest').execute({
+    caseId: 'ingest',
+    itemsJson: JSON.stringify([
+      { url: 'https://www.gsxt.gov.cn/registry/1', title: 'Registry record' },
+      { url: 'https://m.liepin.com/job/2.shtml' },
+      { url: 'https://example.com/blog' },
+      { url: 'https://not-e3.example.com/', sourceType: 'company_registry', evidenceLevel: 'E3' },
+      { url: '' },
+    ]),
+  }, { agent: { id: 'session-a' } }))
+
+  assert.equal(result.added.length, 3)
+  assert.equal(result.errors.length, 2)
+  assert.deepEqual(result.added[0], {
+    sourceId: 'src-1', title: 'Registry record', url: 'https://www.gsxt.gov.cn/registry/1',
+    type: 'company_registry', evidenceLevel: 'E3',
+    inferred: { type: true, evidenceLevel: true },
+  })
+  assert.equal(result.added[1].type, 'job_posting')
+  assert.equal(result.added[1].evidenceLevel, 'E2')
+  assert.equal(result.added[2].type, 'other')
+  // the invalid E3 item is isolated in errors and does not abort the batch
+  assert.match(result.errors[0].error, /E3 sources require/)
+  assert.equal(result.errors[1].error, 'url is required')
+
+  // sources are registered in the case and carry events
+  const report = await tools.get('scout_report').execute({ caseId: 'ingest' }, { agent: { id: 'session-a' } })
+  assert.match(report, /src-1/)
+  assert.match(report, /src-3/)
+  assert.doesNotMatch(report, /src-4/)
 })
