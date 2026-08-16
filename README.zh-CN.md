@@ -19,7 +19,7 @@
 - `scout_add_claim`：添加一条受证据边界约束的主张。
 - `scout_verify_identity`：通过 `E3` 来源确认法定主体。
 - `scout_verify_claim`：提升主张的验证状态，同时保留其此前的证据状态。
-- `scout_report`：生成当前 Markdown 报告。
+- `scout_report`：生成当前 Markdown 报告（证据概况统计、按影响排序的关键证据/风险/角色假设、**待核验清单**、带 URL 的来源清单与面试问题）。
 
 首个案例夹具是 [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json)。其中的历史材料被刻意标记为 `E1`，不会被视为当前有效的核验依据。
 

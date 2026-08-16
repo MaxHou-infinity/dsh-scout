@@ -19,7 +19,7 @@ This repository contains the first runnable, session-isolated slice:
 - `scout_add_claim`: attach an evidence-bounded claim.
 - `scout_verify_identity`: confirm the legal entity from an `E3` source.
 - `scout_verify_claim`: promote a claim while retaining its prior evidence state.
-- `scout_report`: render the current Markdown report.
+- `scout_report`: render the current Markdown report (evidence summary counts, impact-sorted key evidence/risks/role hypotheses, a **verification checklist**, URL-linked source list, and interview questions).
 
 The first case fixture is [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json). Its historical material is deliberately marked as `E1` and is not treated as current verification.
 

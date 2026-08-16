@@ -350,11 +350,19 @@ export function decideCase(scoutCase: ScoutCase): ScoutCase {
   }
 }
 
+const IMPACT_RANK: Record<ClaimImpact, number> = { blocking: 0, material: 1, informational: 2 }
+
+function byImpact(claims: ScoutClaim[]): ScoutClaim[] {
+  return [...claims].sort((a, b) => IMPACT_RANK[a.impact] - IMPACT_RANK[b.impact])
+}
+
 export function renderReport(scoutCase: ScoutCase): string {
+  const sourceLine = (source: ScoutSource) => {
+    const url = source.url ? ` — ${source.url}` : ''
+    return `- ${source.sourceId}: ${source.title} [${source.type} / ${source.evidenceLevel}]${url}`
+  }
   const sources = scoutCase.sources.length
-    ? scoutCase.sources.map(source =>
-        `- ${source.sourceId}: ${source.title} [${source.type} / ${source.evidenceLevel}]`,
-      ).join('\n')
+    ? scoutCase.sources.map(sourceLine).join('\n')
     : '- 暂无来源'
   const claimLine = (claim: ScoutClaim) => {
     const sourceIds = claim.sourceIds.length ? claim.sourceIds.join(', ') : '无来源'
@@ -364,13 +372,28 @@ export function renderReport(scoutCase: ScoutCase): string {
   const claims = scoutCase.claims.length
     ? scoutCase.claims.map(claimLine).join('\n')
     : '- 暂无结论'
-  const supports = scoutCase.claims.filter(claim => claim.status === 'verified').slice(0, 3)
-  const risks = scoutCase.claims.filter(claim =>
+  const supports = byImpact(scoutCase.claims.filter(claim => claim.status === 'verified')).slice(0, 3)
+  const risks = byImpact(scoutCase.claims.filter(claim =>
     claim.impact !== 'informational' && claim.status !== 'verified',
-  ).slice(0, 3)
-  const roleHypotheses = scoutCase.claims.filter(claim =>
+  )).slice(0, 3)
+  const roleHypotheses = byImpact(scoutCase.claims.filter(claim =>
     ['role_existence', 'reporting_line', 'mandate'].includes(claim.dimension),
-  ).slice(0, 3)
+  )).slice(0, 3)
+  const checklist = byImpact(scoutCase.claims.filter(claim =>
+    claim.impact !== 'informational' && claim.status !== 'verified',
+  ))
+  const checklistLine = (claim: ScoutClaim) =>
+    `- [${claim.impact}] ${claim.claimId}: ${claim.text} → 下一步：${claim.nextAction}`
+  const checklistBlock = checklist.length
+    ? checklist.map(checklistLine).join('\n')
+    : '- 无待核验的阻断级或重要事项'
+  const statusCounts = scoutCase.claims.reduce<Record<string, number>>((counts, claim) => {
+    counts[claim.status] = (counts[claim.status] ?? 0) + 1
+    return counts
+  }, {})
+  const summary = Object.entries(statusCounts)
+    .map(([status, count]) => `${count} ${status}`)
+    .join(' / ')
 
   return [
     `# ${scoutCase.title}`,
@@ -378,6 +401,7 @@ export function renderReport(scoutCase: ScoutCase): string {
     `- 判断：**${scoutCase.decision}**`,
     `- 理由：${scoutCase.decisionReason}`,
     `- 目标：${scoutCase.decisionObjective}`,
+    ...(summary ? [`- 证据概况：${summary}`] : []),
     '',
     '## Key supporting evidence (up to 3)',
     '',
@@ -390,6 +414,10 @@ export function renderReport(scoutCase: ScoutCase): string {
     '## Role task and authority hypotheses',
     '',
     roleHypotheses.length ? roleHypotheses.map(claimLine).join('\n') : '- 岗位真实性、汇报关系和授权边界尚未建模',
+    '',
+    '## Verification checklist',
+    '',
+    checklistBlock,
     '',
     '## Claim ledger',
     '',

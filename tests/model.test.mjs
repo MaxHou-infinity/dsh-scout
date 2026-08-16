@@ -353,8 +353,55 @@ test('isolates identical case ids by DSH agent session identity', async () => {
   assert.match(reportB, /Company B — Role B/)
 })
 
-test('exports a disposable DSH plugin tool surface', async () => {
-  const registered = []
+test('renders an evidence summary, source URLs, and a prioritized verification checklist', () => {
+  let scoutCase = createCase({
+    caseId: 'demo',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+  })
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'job-posting',
+    type: 'job_posting',
+    title: 'Example job posting',
+    url: 'https://example.com/job',
+    capturedAt: '2026-08-14T00:00:00.000Z',
+    evidenceLevel: 'E1',
+    status: 'captured',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-role',
+    text: 'The role exists.',
+    status: 'reported',
+    evidenceLevel: 'E1',
+    dimension: 'role_existence',
+    impact: 'blocking',
+    sourceIds: ['job-posting'],
+    confidenceNote: 'The job posting is a company-controlled source.',
+    nextAction: 'Confirm the mandate and budget in the interview.',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-risk',
+    text: 'A litigation risk is reported.',
+    status: 'reported',
+    evidenceLevel: 'E1',
+    dimension: 'risk',
+    impact: 'material',
+    sourceIds: ['job-posting'],
+    confidenceNote: 'A media report mentions the risk.',
+    nextAction: 'Check the court docket.',
+  })
+  const report = renderReport(scoutCase)
+
+  assert.match(report, /证据概况：2 reported/)
+  assert.match(report, /https:\/\/example\.com\/job/)
+  assert.match(report, /## Verification checklist/)
+  const checklistStart = report.indexOf('## Verification checklist')
+  const checklist = report.slice(checklistStart, report.indexOf('## Claim ledger'))
+  assert.ok(checklist.indexOf('[blocking]') < checklist.indexOf('[material]'), 'blocking items rank before material')
+  assert.match(checklist, /→ 下一步：Confirm the mandate/)
+})
+
+test('exports a disposable DSH plugin tool surface', async () => {  const registered = []
   const disposed = []
   const effects = []
   apply({
