@@ -1155,3 +1155,53 @@ test('scout_ingest rejects invalid claim enums explicitly and keeps claim ids co
   // the valid claim skipped the pre-seeded claim-1
   assert.deepEqual(result.added[3].claims, ['claim-2'])
 })
+
+test('covers registry boundaries, non-object claims, and verified-E0 rejection via claim drafts', async () => {
+  // registry classification boundaries
+  assert.deepEqual(inferSourceType('https://brreg.no/'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://www.sse.com.cn/'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://www.szse.cn/'), { type: 'company_registry', inferred: true })
+  assert.deepEqual(inferSourceType('https://brreg.no.evil.com/'), { type: 'other', inferred: true })
+
+  const registered = []
+  const store = new Map()
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    fs: {
+      async resolve(path) { return { targetKey: path, displayPath: path } },
+      async readText(target) { return store.get(target.displayPath) },
+      async writeText(target, content) { store.set(target.displayPath, content); return { operation: 'create' } },
+    },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'edge', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_ingest').execute({
+    caseId: 'edge',
+    itemsJson: JSON.stringify([
+      { url: 'https://m.liepin.com/job/1.shtml', claim: 'not-an-object' },
+      { url: 'https://example.com/e0', sourceType: 'other', evidenceLevel: 'E0', claim: { text: 'no evidence', dimension: 'risk', status: 'verified', evidenceLevel: 'E0' } },
+      { url: 'https://m.liepin.com/job/2.shtml', claim: { text: 'event payload check', dimension: 'mandate' } },
+    ]),
+  }, { agent: { id: 'session-a' } }))
+
+  // non-object claim and verified-E0 claim are rejected; sources survive
+  assert.equal(result.added.length, 3)
+  assert.equal(result.errors.length, 2)
+  assert.match(result.errors[0].error, /claim must be an object/)
+  assert.match(result.errors[1].error, /at least E1 evidence/)
+  assert.equal(result.added[1].claims, undefined) // E0 verified claim not attached
+  assert.deepEqual(result.added[2].claims, ['claim-2'])
+
+  // claim_added event detail carries text and sourceIds in the export
+  await tools.get('scout_export').execute(
+    { caseId: 'edge' },
+    { agent: { id: 'session-a' } },
+  )
+  const events = store.get('dsh-scout/edge/events.jsonl')
+  assert.ok(events.includes('"text":"event payload check"'))
+  assert.ok(events.includes('"sourceIds":["src-3"]'))
+})
