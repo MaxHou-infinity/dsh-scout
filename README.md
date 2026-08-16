@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 24 passing](https://img.shields.io/badge/tests-24%20passing-green)](tests/model.test.mjs)
+[![tests 26 passing](https://img.shields.io/badge/tests-26%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -100,6 +100,7 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 | `scout_verify_claim` | 用更强证据提升主张为 verified |
 | `scout_report` | 渲染当前 Markdown 报告 |
 | `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单（上限 12 条） |
+| `scout_compare` | 2–5 个案例的并排对比报告（决策/主体/关键结论/风险/面试问题） |
 | `scout_export` | 持久化五文件导出（case/sources/claims/events/report） |
 | `scout_import` | 从导出目录恢复案例并重算决策 |
 
@@ -153,7 +154,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 24 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
+pnpm test        # 26 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
 pnpm run check:release
 ```
 
@@ -163,6 +164,7 @@ pnpm run check:release
 - ✅ v0.2：五文件持久化导出 + 事件流 + 导入恢复
 - ✅ v0.3：可配置存储（`scoutDir` / `autoPersist`）+ 面试问题生成（`scout_questions`）
 - ✅ v0.4：信息采集登记（`scout_ingest`：批量登记搜索结果/抓取页面，自动推断来源类型与证据等级）
+- ✅ v0.5：公司/岗位对比（`scout_compare`：多案例并排对比报告，合并面试问题）
 - ⏳ 下一阶段：Provider 深度集成（搜索/浏览器结果自动流转为来源与主张）
 
 ## 社区

@@ -16,6 +16,7 @@ import {
   importCaseFromFiles,
   inferEvidenceLevel,
   inferSourceType,
+  renderComparison,
   renderReport,
   SOURCE_TYPES,
   type ScoutCase,
@@ -277,6 +278,24 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         scoutCase = await maybePersist(scoutCase)
         cases.set(key, scoutCase)
         return JSON.stringify({ added, errors }, null, 2)
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_compare',
+      description: 'Render a side-by-side comparison report for two to five existing cases (decision, identity status, verified conclusions, open risks, and merged interview questions).',
+      parameters: {
+        caseIds: { type: 'string', required: true, description: 'Comma-separated case identifiers; at least two, at most five.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        const agentId = exec.agent?.id
+        const caseIds = args.caseIds.split(',').map(value => value.trim()).filter(Boolean)
+        const compared = caseIds.map(caseId => requireCase(caseKey(caseId, agentId)))
+        return renderComparison(compared)
       },
     }))
 

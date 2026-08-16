@@ -13,6 +13,7 @@ import {
   inferEvidenceLevel,
   inferSourceType,
   isTrustedAuthorityUrl,
+  renderComparison,
   renderReport,
   verifyClaim,
   verifyIdentity,
@@ -430,6 +431,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
     [
       'scout_add_claim',
       'scout_add_source',
+      'scout_compare',
       'scout_export',
       'scout_import',
       'scout_ingest',
@@ -937,4 +939,77 @@ test('scout_ingest isolates null items and invalid explicit enums, and avoids su
   assert.match(report, /src-1/)
   assert.match(report, /src-2/)
   assert.doesNotMatch(report, /src-3/)
+})
+
+test('renders a side-by-side comparison of two cases', () => {
+  const makeCase = (caseId, companyName, verifiedIdentity) => {
+    let scoutCase = createCase({
+      caseId, companyName, roleTitle: 'HR Head', location: 'Shenzhen',
+    })
+    scoutCase = addSource(scoutCase, {
+      sourceId: 's1', type: 'job_posting', title: 'posting', url: 'https://example.com/job',
+      capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+    })
+    scoutCase = addClaim(scoutCase, {
+      claimId: 'c1', text: `${companyName} pays 30k.`, status: 'reported', evidenceLevel: 'E1',
+      dimension: 'mandate', impact: 'material', sourceIds: ['s1'],
+      confidenceNote: 'reported', nextAction: 'Confirm in interview.',
+    })
+    scoutCase = addClaim(scoutCase, {
+      claimId: 'c2', text: `${companyName} has a legal risk.`, status: 'unknown', evidenceLevel: 'E0',
+      dimension: 'risk', impact: 'blocking', sourceIds: [],
+      confidenceNote: 'unknown', nextAction: 'Check the docket.',
+    })
+    if (verifiedIdentity) {
+      scoutCase = addSource(scoutCase, {
+        sourceId: 'reg', type: 'company_registry', title: 'registry', url: 'https://www.gsxt.gov.cn/r',
+        capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E3', status: 'captured',
+      })
+      scoutCase = verifyIdentity(scoutCase, {
+        legalEntity: companyName, registrationNumber: 'REG-1', registeredRegion: 'Shenzhen',
+        legalRepresentative: 'P', brandRelationship: 'brand', sourceIds: ['reg'],
+      })
+    }
+    return decideCase(scoutCase)
+  }
+  const caseA = makeCase('a', 'Company A', true)
+  const caseB = makeCase('b', 'Company B', false)
+
+  const report = renderComparison([caseA, caseB])
+  assert.match(report, /# 公司\/岗位对比（2 个案例）/)
+  assert.match(report, /## 决策与主体核验对比/)
+  assert.match(report, /Company A — HR Head \| VERIFY \| ✅ 已核验/)
+  assert.match(report, /Company B — HR Head \| VERIFY \| ⚠️ 待核验/)
+  assert.match(report, /Company A pays 30k\./)
+  assert.match(report, /Company B has a legal risk\./)
+  assert.match(report, /## 面试问题（合并去重，前 12 条）/)
+
+  assert.throws(() => renderComparison([caseA]), /at least two/)
+  const five = [caseA, caseB, caseA, caseB, caseA, caseB]
+  assert.throws(() => renderComparison(five), /at most five/)
+})
+
+test('scout_compare tool compares cases and inference rejects invalid explicit enums', async () => {
+  // model-layer enum defense (review L3)
+  assert.deepEqual(inferSourceType('https://example.com/', 'not_a_type'), { type: 'other', inferred: true })
+  assert.deepEqual(inferEvidenceLevel('https://example.com/', 'job_posting', 'E9'), { evidenceLevel: 'E2', inferred: true })
+
+  const registered = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  for (const [caseId, company] of [['a', 'Company A'], ['b', 'Company B']]) {
+    await tools.get('scout_start').execute({
+      caseId, companyName: company, roleTitle: 'HR Head', location: '',
+    }, { agent: { id: 'session-a' } })
+  }
+  const result = await tools.get('scout_compare').execute(
+    { caseIds: 'a, b' },
+    { agent: { id: 'session-a' } },
+  )
+  assert.match(result, /公司\/岗位对比（2 个案例）/)
+  assert.match(result, /Company A/)
+  assert.match(result, /Company B/)
 })

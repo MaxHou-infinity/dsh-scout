@@ -224,7 +224,7 @@ export function inferSourceType(
   url: string | null,
   explicit?: SourceType,
 ): { type: SourceType; inferred: boolean } {
-  if (explicit) return { type: explicit, inferred: false }
+  if (explicit && SOURCE_TYPES.includes(explicit)) return { type: explicit, inferred: false }
   if (url) {
     try {
       const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, '')
@@ -249,7 +249,7 @@ export function inferEvidenceLevel(
   type: SourceType,
   explicit?: EvidenceLevel,
 ): { evidenceLevel: EvidenceLevel; inferred: boolean } {
-  if (explicit) return { evidenceLevel: explicit, inferred: false }
+  if (explicit && EVIDENCE_LEVELS.includes(explicit)) return { evidenceLevel: explicit, inferred: false }
   if (IDENTITY_SOURCE_TYPES.has(type) && isTrustedAuthorityUrl(url)) {
     return { evidenceLevel: 'E3', inferred: true }
   }
@@ -624,4 +624,88 @@ export function importCaseFromFiles(files: Record<string, string>): ScoutCase {
     interviewQuestions: base.interviewQuestions as string[],
     events,
   }
+}
+
+const CLAIM_STATUS_LABELS: Record<string, string> = {
+  verified: '已核验',
+  reported: '转述',
+  inferred: '推断',
+  contradicted: '矛盾',
+  unknown: '未知',
+  needs_verification: '待核验',
+}
+
+/** Render a side-by-side comparison report for two or more cases. */
+export function renderComparison(cases: ScoutCase[]): string {
+  if (cases.length < 2) throw new Error('Comparison requires at least two cases')
+  if (cases.length > 5) throw new Error('Comparison supports at most five cases')
+  const countByStatus = (scoutCase: ScoutCase) => scoutCase.claims.reduce<Record<string, number>>((counts, claim) => {
+    counts[claim.status] = (counts[claim.status] ?? 0) + 1
+    return counts
+  }, {})
+  const summaryLine = (scoutCase: ScoutCase) => {
+    const counts = countByStatus(scoutCase)
+    const identity = scoutCase.subject.identityStatus === 'verified' ? '已核验' : '待核验'
+    const countsText = Object.entries(counts)
+      .map(([status, count]) => `${count} ${CLAIM_STATUS_LABELS[status] ?? status}`)
+      .join(' / ')
+    return `- **${scoutCase.title}**：决策 **${scoutCase.decision}**；主体${identity}；主张 ${scoutCase.claims.length} 条（${countsText}）`
+  }
+  const compareTable = [
+    '| 案例 | 决策 | 主体核验 | 主张数 |',
+    '|---|---|---|---|',
+    ...cases.map(scoutCase =>
+      `| ${scoutCase.title} | ${scoutCase.decision} | ${scoutCase.subject.identityStatus === 'verified' ? '✅ 已核验' : '⚠️ 待核验'} | ${scoutCase.claims.length} |`,
+    ),
+  ]
+  const sections: string[] = []
+  for (const scoutCase of cases) {
+    const verified = byImpact(scoutCase.claims.filter(claim => claim.status === 'verified')).slice(0, 3)
+    const open = byImpact(scoutCase.claims.filter(claim =>
+      claim.impact !== 'informational' && claim.status !== 'verified',
+    )).slice(0, 3)
+    sections.push(
+      `### ${scoutCase.title}`,
+      '',
+      '**关键已核验结论**：',
+      verified.length ? verified.map(claim => `- ${claim.text}`).join('\n') : '- 暂无已核验结论',
+      '',
+      '**待核验风险/未知项**：',
+      open.length ? open.map(claim => `- [${claim.impact}] ${claim.text} → ${claim.nextAction}`).join('\n') : '- 无',
+      '',
+    )
+  }
+  const mergedQuestions: string[] = []
+  const seen = new Set<string>()
+  for (const scoutCase of cases) {
+    for (const question of generateInterviewQuestions(scoutCase)) {
+      const key = question.trim()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      mergedQuestions.push(key)
+      if (mergedQuestions.length >= 12) break
+    }
+    if (mergedQuestions.length >= 12) break
+  }
+  return [
+    `# 公司/岗位对比（${cases.length} 个案例）`,
+    '',
+    '## 总览',
+    '',
+    ...cases.map(summaryLine),
+    '',
+    '## 决策与主体核验对比',
+    '',
+    ...compareTable,
+    '',
+    '## 各案例详情',
+    '',
+    ...sections,
+    '## 面试问题（合并去重，前 12 条）',
+    '',
+    ...mergedQuestions.map(question => `- ${question}`),
+    '',
+    '> 对比只呈现各案例证据边界内的状态，不替代法律、投资或医疗意见；关键差异请以原始来源人工复核。',
+    '',
+  ].join('\n')
 }
