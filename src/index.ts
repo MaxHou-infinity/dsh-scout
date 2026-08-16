@@ -32,7 +32,7 @@ import {
 } from './model.js'
 
 export const name = 'dsh-scout'
-export const inject = ['tools', 'fs']
+export const inject = ['tools', 'fs', 'web']
 
 export interface ScoutConfig {
   /** Default directory for case exports; case files land under `<scoutDir>/<caseId>/`. */
@@ -56,6 +56,22 @@ interface ScoutFs {
   ): Promise<{ operation: string }>
 }
 
+interface ScoutWebSource {
+  url: string
+  title?: string
+  snippet?: string
+  publishedAt?: string
+}
+interface ScoutWebResult {
+  content?: string
+  sources: ScoutWebSource[]
+  truncated: boolean
+}
+interface ScoutWeb {
+  search(request: { query: string; maxResults?: number }, signal?: unknown): Promise<ScoutWebResult>
+  fetch(request: { url: string }, signal?: unknown): Promise<unknown>
+}
+
 export function apply(ctx: Context, config: ScoutConfig = {}) {
   const cases = new Map<string, ScoutCase>()
   const caseKey = (caseId: string, agentId: unknown) => `${String(agentId ?? 'unscoped')}::${caseId}`
@@ -65,6 +81,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
     return scoutCase
   }
   const fs = (ctx as unknown as { fs?: ScoutFs }).fs
+  const web = (ctx as unknown as { web?: ScoutWeb }).web
   const defaultScoutDir = config.scoutDir?.replace(/\/+$/, '') || 'dsh-scout'
   const caseExportDir = (caseId: string) => `${defaultScoutDir}/${caseId}`
   const persistFiles = async (scoutCase: ScoutCase, targetDir: string): Promise<{ persisted: boolean; targetDir: string; error?: string }> => {
@@ -95,6 +112,15 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
       detail,
     })
   }
+  const registerSource = (scoutCase: ScoutCase, source: ScoutSource): ScoutCase =>
+    recordEvent(addSource(scoutCase, source), 'source_added', {
+      sourceId: source.sourceId,
+      type: source.type,
+      title: source.title,
+      url: source.url,
+      evidenceLevel: source.evidenceLevel,
+      ingested: true,
+    })
   const maybePersist = async (scoutCase: ScoutCase) => {
     if (!config.autoPersist) return scoutCase
     const targetDir = caseExportDir(scoutCase.caseId)
@@ -259,14 +285,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
               evidenceLevel: levelGuess.evidenceLevel,
               status: 'captured',
             }
-            scoutCase = recordEvent(addSource(scoutCase, source), 'source_added', {
-              sourceId: source.sourceId,
-              type: source.type,
-              title: source.title,
-              url: source.url,
-              evidenceLevel: source.evidenceLevel,
-              ingested: true,
-            })
+            scoutCase = registerSource(scoutCase, source)
             const addedEntry: Record<string, unknown> = {
               sourceId,
               title,
@@ -349,6 +368,78 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
         scoutCase = await maybePersist(scoutCase)
         cases.set(key, scoutCase)
         return JSON.stringify({ added, errors }, null, 2)
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_search',
+      description: 'Run a web search through the DSH web provider and auto-register the result URLs as sources for the case (type and evidence level inferred per URL). Optionally limits how many results are registered.',
+      parameters: {
+        caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
+        query: { type: 'string', required: true, description: 'Search query to run through the web provider.' },
+        limit: { type: 'number', description: 'Maximum number of search results to register (default 5, capped at 10).' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        if (!web) throw new Error('Web search service is unavailable in this host')
+        const key = caseKey(args.caseId, exec.agent?.id)
+        let scoutCase = requireCase(key)
+        const limit = Math.min(Math.max(Math.trunc(args.limit ?? 5) || 5, 1), 10)
+        const result = await web.search({ query: args.query, maxResults: limit }, exec.signal)
+        const added: Array<Record<string, unknown>> = []
+        const errors: Array<{ url: string; error: string }> = []
+        let nextId = (scoutCase.sources.length ?? 0) + 1
+        for (const item of result.sources) {
+          const url = typeof item.url === 'string' ? item.url.trim() : ''
+          if (!url) {
+            errors.push({ url: '', error: 'search result missing url' })
+            continue
+          }
+          try {
+            const typeGuess = inferSourceType(url)
+            const levelGuess = inferEvidenceLevel(url, typeGuess.type)
+            let sourceId = `src-${nextId}`
+            while (scoutCase.sources.some(source => source.sourceId === sourceId)) {
+              nextId += 1
+              sourceId = `src-${nextId}`
+            }
+            nextId += 1
+            const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : url
+            scoutCase = registerSource(scoutCase, {
+              sourceId,
+              type: typeGuess.type,
+              title,
+              url,
+              capturedAt: new Date().toISOString(),
+              evidenceLevel: levelGuess.evidenceLevel,
+              status: 'captured',
+            })
+            added.push({
+              sourceId,
+              title,
+              url,
+              type: typeGuess.type,
+              evidenceLevel: levelGuess.evidenceLevel,
+              snippet: typeof item.snippet === 'string' ? item.snippet.slice(0, 300) : null,
+              inferred: { type: typeGuess.inferred, evidenceLevel: levelGuess.inferred },
+            })
+          } catch (error) {
+            errors.push({ url, error: error instanceof Error ? error.message : String(error) })
+          }
+        }
+        scoutCase = decideCase(scoutCase)
+        scoutCase = await maybePersist(scoutCase)
+        cases.set(key, scoutCase)
+        return JSON.stringify({
+          query: args.query,
+          truncated: result.truncated,
+          added,
+          errors,
+          content: typeof result.content === 'string' && result.content ? result.content.slice(0, 500) : null,
+        }, null, 2)
       },
     }))
 

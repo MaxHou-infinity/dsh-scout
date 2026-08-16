@@ -425,7 +425,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
   })
 
   assert.equal(name, 'dsh-scout')
-  assert.deepEqual(inject, ['tools', 'fs'])
+  assert.deepEqual(inject, ['tools', 'fs', 'web'])
   assert.deepEqual(
     registered.map(tool => tool.name).sort(),
     [
@@ -437,6 +437,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
       'scout_ingest',
       'scout_questions',
       'scout_report',
+      'scout_search',
       'scout_start',
       'scout_verify_claim',
       'scout_verify_identity',
@@ -1204,4 +1205,69 @@ test('covers registry boundaries, non-object claims, and verified-E0 rejection v
   const events = store.get('dsh-scout/edge/events.jsonl')
   assert.ok(events.includes('"text":"event payload check"'))
   assert.ok(events.includes('"sourceIds":["src-3"]'))
+})
+
+test('scout_search registers provider results as sources and requires the web service', async () => {
+  const registered = []
+  const searched = []
+  apply({
+    tools: { register(tool) { registered.push(tool); return () => undefined } },
+    web: {
+      async search(request) {
+        searched.push(request)
+        return {
+          content: 'answer snippet',
+          truncated: false,
+          sources: [
+            { url: 'https://www.gsxt.gov.cn/registry/9', title: 'Registry' },
+            { url: 'https://m.liepin.com/job/7.shtml' },
+            { url: 'https://example.com/unknown', snippet: 'a snippet' },
+          ],
+        }
+      },
+    },
+    effect(execute) { Array.from(execute()) },
+  })
+  const tools = new Map(registered.map(t => [t.name, t]))
+  await tools.get('scout_start').execute({
+    caseId: 'search', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
+  }, { agent: { id: 'session-a' } })
+
+  const result = JSON.parse(await tools.get('scout_search').execute({
+    caseId: 'search',
+    query: 'Example Co company registry',
+    limit: 10,
+  }, { agent: { id: 'session-a' } }))
+
+  assert.equal(searched.length, 1)
+  assert.equal(searched[0].query, 'Example Co company registry')
+  assert.equal(searched[0].maxResults, 10)
+  assert.equal(result.added.length, 3)
+  assert.equal(result.errors.length, 0)
+  assert.equal(result.added[0].type, 'company_registry')
+  assert.equal(result.added[0].evidenceLevel, 'E3')
+  assert.equal(result.added[1].type, 'job_posting')
+  assert.equal(result.added[2].snippet, 'a snippet')
+  assert.equal(result.content, 'answer snippet')
+  assert.equal(result.truncated, false)
+
+  // sources landed in the case
+  const report = await tools.get('scout_report').execute({ caseId: 'search' }, { agent: { id: 'session-a' } })
+  assert.match(report, /src-1/)
+  assert.match(report, /src-3/)
+
+  // web service missing -> explicit error
+  const noWeb = []
+  apply({
+    tools: { register(tool) { noWeb.push(tool); return () => undefined } },
+    effect(execute) { Array.from(execute()) },
+  })
+  const toolsNoWeb = new Map(noWeb.map(t => [t.name, t]))
+  await toolsNoWeb.get('scout_start').execute({
+    caseId: 'x', companyName: 'C', roleTitle: 'R', location: '',
+  }, { agent: { id: 'session-b' } })
+  await assert.rejects(
+    toolsNoWeb.get('scout_search').execute({ caseId: 'x', query: 'q' }, { agent: { id: 'session-b' } }),
+    /Web search service is unavailable/,
+  )
 })

@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 30 passing](https://img.shields.io/badge/tests-30%20passing-green)](tests/model.test.mjs)
+[![tests 31 passing](https://img.shields.io/badge/tests-31%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -50,6 +50,8 @@
 
 ```
 scout_start          创建案例（默认决策 VERIFY）
+   │
+scout_search         调用 Web Provider 搜索，结果自动登记为来源
    │
 scout_ingest         批量登记采集结果（可随来源自动登记主张）
    │
@@ -99,6 +101,7 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 | `scout_start` | 创建尽调案例 |
 | `scout_add_source` | 登记信息来源（含证据等级） |
 | `scout_ingest` | 批量登记采集结果（自动推断来源类型/证据等级，可随来源一键登记主张草稿） |
+| `scout_search` | 调用 DSH Web Provider 搜索并自动登记结果来源（type/evidence 按 URL 推断） |
 | `scout_add_claim` | 添加证据受限的主张 |
 | `scout_verify_identity` | 用 E3 官方源核验法定主体 |
 | `scout_verify_claim` | 用更强证据提升主张为 verified |
@@ -158,7 +161,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 30 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转
+pnpm test        # 31 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转
 pnpm run check:release
 ```
 
@@ -170,7 +173,7 @@ pnpm run check:release
 - ✅ v0.4：信息采集登记（`scout_ingest`：批量登记搜索结果/抓取页面，自动推断来源类型与证据等级）
 - ✅ v0.5：公司/岗位对比（`scout_compare`：多案例并排对比报告，合并面试问题）
 - ✅ v0.6：采集→主张流转（`scout_ingest` 支持 claim 草稿：登记来源的同时自动添加主张）
-- ⏳ 下一阶段：Provider 深度集成（搜索/浏览器结果直接驱动采集与主张）
+- ✅ v0.7：Provider 深度集成（`scout_search`：DSH Web Provider 搜索，结果自动登记为来源）
 
 ## 社区
 
