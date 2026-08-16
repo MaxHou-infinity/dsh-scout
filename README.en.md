@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 16 passing](https://img.shields.io/badge/tests-16%20passing-green)](tests/model.test.mjs)
+[![tests 19 passing](https://img.shields.io/badge/tests-19%20passing-green)](tests/model.test.mjs)
 [![中文 README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-2ea44f)](README.md)
 
 **司察（Scout）** — evidence-driven company & job due-diligence plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness).
@@ -29,12 +29,13 @@ This repository contains the first runnable, session-isolated slice:
 - `scout_verify_identity`: confirm the legal entity from an `E3` source.
 - `scout_verify_claim`: promote a claim while retaining its prior evidence state.
 - `scout_report`: render the current Markdown report (evidence summary counts, impact-sorted key evidence/risks/role hypotheses, a **verification checklist**, URL-linked source list, and interview questions).
-- `scout_export`: persist a case as the durable **five-file export** (`case.json`, `sources.json`, `claims.json`, `events.jsonl`, `report.md`) into a target directory.
+- `scout_questions`: derive a deduplicated, prioritized interview question list from the case.
+- `scout_export`: persist a case as the durable **five-file export** (`case.json`, `sources.json`, `claims.json`, `events.jsonl`, `report.md`) into a target directory (`targetDir` is optional; defaults to `<scoutDir>/<caseId>`).
 - `scout_import`: restore a case from a five-file export directory and recompute its decision.
 
 The first case fixture is [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json). Its historical material is deliberately marked as `E1` and is not treated as current verification.
 
-Case state lives in memory by default and is isolated by DSH agent/session identity; `scout_export` / `scout_import` make a case durable across sessions through the five-file format with a replayable `events.jsonl`. Configurable storage directories and provider-backed collection are the next implementation slice; this repository does not yet claim the full product contract is complete.
+Case state lives in memory by default and is isolated by DSH agent/session identity; `scout_export` / `scout_import` make a case durable across sessions through the five-file format with a replayable `events.jsonl`. Configurable storage is available via plugin config (`scoutDir` / `autoPersist`); provider-backed collection is the next implementation slice. This repository does not yet claim the full product contract is complete.
 
 ## Development
 
@@ -44,7 +45,7 @@ pnpm test
 pnpm run check:release
 ```
 
-The tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into an isolated temporary DSH profile, verifies `--dump-config`, checks the mounted tools, and observes the Cordis unload disposer. The gate uses `DSH_BIN` or a local `dsh` binary when available; otherwise it downloads the exact official CLI version `0.1.0-rc.6` through `npx`.
+The tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, auto-persist, question generation, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into an isolated temporary DSH profile, verifies `--dump-config`, checks the mounted tools, and observes the Cordis unload disposer. The gate uses `DSH_BIN` or a local `dsh` binary when available; otherwise it downloads the exact official CLI version `0.1.0-rc.6` through `npx`.
 
 ## Install into a DSH profile
 
@@ -56,6 +57,20 @@ dsh --profile scout-demo --dump-config
 ```
 
 Git installs fetch source and run `prepare`. pnpm may require an explicit `allowBuilds` entry for `dsh-scout`; only allow a pinned source you have reviewed. The current package targets `@deepseek-ai/dsh-tools` `0.1.0-rc.6` and `@deepseek-ai/cordis` `4.0.x`.
+
+## Configuration (optional)
+
+Configure `dsh-scout` in the DSH profile's `cordis.patch.yml`:
+
+```yaml
+- id: dsh-scout
+  config:
+    scoutDir: /path/to/scout-cases   # default export dir; cases land in <scoutDir>/<caseId>/
+    autoPersist: true                # write the five files after every mutation (default false)
+```
+
+- Without `scoutDir`, `scout_export` with no `targetDir` writes to `./dsh-scout/<caseId>/`;
+- With `autoPersist: true`, every `scout_start` / `scout_add_source` / `scout_add_claim` / `scout_verify_*` persists automatically; a failed write does not break the main flow.
 
 ## Design boundaries
 

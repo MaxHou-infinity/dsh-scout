@@ -376,6 +376,36 @@ function byImpact(claims: ScoutClaim[]): ScoutClaim[] {
   return [...claims].sort((a, b) => IMPACT_RANK[a.impact] - IMPACT_RANK[b.impact])
 }
 
+const MISSING_DIMENSION_QUESTIONS: Record<string, string> = {
+  role_existence: '该岗位当前是否真实在招？招聘状态与到岗时间如何？',
+  reporting_line: '该岗位直接向谁汇报？虚线/实线如何划分？',
+  mandate: '该岗位在哪些事项上拥有最终决定权？团队与预算规模如何？',
+}
+
+/** Derive a deduplicated, prioritized interview question list from the case. */
+export function generateInterviewQuestions(scoutCase: ScoutCase): string[] {
+  const nextActions = byImpact(scoutCase.claims.filter(claim =>
+    claim.impact !== 'informational' && claim.status !== 'verified',
+  ))
+    .map(claim => claim.nextAction.trim())
+    .filter((action, index, all) => action && all.indexOf(action) === index)
+  const missingDimensions = Object.keys(MISSING_DIMENSION_QUESTIONS).filter(dimension =>
+    !scoutCase.claims.some(claim => claim.dimension === dimension && claim.status === 'verified'),
+  )
+  const questions = [
+    ...nextActions,
+    ...missingDimensions.map(dimension => MISSING_DIMENSION_QUESTIONS[dimension]),
+    ...scoutCase.interviewQuestions,
+  ]
+  const seen = new Set<string>()
+  return questions.filter(question => {
+    const key = question.trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 12)
+}
+
 export function renderReport(scoutCase: ScoutCase): string {
   const sourceLine = (source: ScoutSource) => {
     const url = source.url ? ` — ${source.url}` : ''

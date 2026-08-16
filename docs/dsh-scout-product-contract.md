@@ -3,7 +3,7 @@
 状态：Draft 0.1
 目标：把公司与岗位尽调收敛为一个可复现、可追溯、能支持下一步行动的 DSH 场景插件。
 
-当前实现进度：首个公开切片已经覆盖 session 隔离的内存 case、封闭来源类型、主体核验、claim 证据历史、保守三态决策、结构化报告、卸载清理和临时 DSH profile 安装门禁；v0.2 已落地持久化五文件导出（`scout_export` / `scout_import`，含可回放事件流 `events.jsonl` 与导入后决策重算）。可配置存储目录和 provider 采集仍是后续纵切；在这些能力完成前，不宣称本契约整体已经验收。
+当前实现进度：首个公开切片已经覆盖 session 隔离的内存 case、封闭来源类型、主体核验、claim 证据历史、保守三态决策、结构化报告、卸载清理和临时 DSH profile 安装门禁；v0.2 已落地持久化五文件导出（`scout_export` / `scout_import`，含可回放事件流 `events.jsonl` 与导入后决策重算）；v0.3 已落地可配置存储（`scoutDir` / `autoPersist` 插件配置）与面试问题生成（`scout_questions`）。provider 采集仍是后续纵切；在这些能力完成前，不宣称本契约整体已经验收。
 
 ## 1. 产品承诺
 

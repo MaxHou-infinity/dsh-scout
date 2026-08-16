@@ -8,6 +8,7 @@ import {
   createCase,
   decideCase,
   exportCaseFiles,
+  generateInterviewQuestions,
   importCaseFromFiles,
   renderReport,
   verifyClaim,
@@ -428,6 +429,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
       'scout_add_source',
       'scout_export',
       'scout_import',
+      'scout_questions',
       'scout_report',
       'scout_start',
       'scout_verify_claim',
@@ -574,4 +576,133 @@ test('exports and imports a case through the fs-backed tools', async () => {
   assert.equal(importResult.claims.length, 1)
   assert.ok(importResult.events?.some(event => event.type === 'case_imported'))
   assert.equal(importResult.decision, 'VERIFY')
+})
+
+test('generates a deduplicated, prioritized interview question list', () => {
+  let scoutCase = createCase({
+    caseId: 'demo',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+  })
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'job-posting',
+    type: 'job_posting',
+    title: 'Example job posting',
+    url: 'https://example.com/job',
+    capturedAt: '2026-08-14T00:00:00.000Z',
+    evidenceLevel: 'E1',
+    status: 'captured',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-role',
+    text: 'The role exists.',
+    status: 'reported',
+    evidenceLevel: 'E1',
+    dimension: 'role_existence',
+    impact: 'blocking',
+    sourceIds: ['job-posting'],
+    confidenceNote: 'A source describes the role.',
+    nextAction: 'Confirm the mandate in the interview.',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-reporting',
+    text: 'Reporting line is unknown.',
+    status: 'unknown',
+    evidenceLevel: 'E0',
+    dimension: 'reporting_line',
+    impact: 'blocking',
+    sourceIds: [],
+    confidenceNote: 'No source discloses the reporting line.',
+    nextAction: 'Ask who this role reports to.',
+  })
+
+  const questions = generateInterviewQuestions(scoutCase)
+  assert.ok(questions.includes('Confirm the mandate in the interview.'))
+  assert.ok(questions.includes('Ask who this role reports to.'))
+  // missing verified mandate dimension gets its default question
+  assert.ok(questions.some(q => q.includes('最终决定权')))
+  // defaults are appended and deduplicated
+  assert.ok(questions.includes(scoutCase.interviewQuestions[0]))
+  assert.equal(new Set(questions).size, questions.length)
+  assert.ok(questions.length <= 12)
+})
+
+test('auto-persists each mutation when configured, and exports to the default dir', async () => {
+  const registered = []
+  const store = new Map()
+  const mockFs = {
+    async resolve(path) {
+      return { targetKey: path, displayPath: path }
+    },
+    async readText(target) {
+      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
+      return store.get(target.displayPath)
+    },
+    async writeText(target, content) {
+      store.set(target.displayPath, content)
+      return { operation: 'create' }
+    },
+  }
+  apply({
+    tools: {
+      register(tool) {
+        registered.push(tool)
+        return () => undefined
+      },
+    },
+    fs: mockFs,
+    effect(execute) {
+      Array.from(execute())
+    },
+  }, { scoutDir: '/tmp/scout-cases', autoPersist: true })
+  const tools = new Map(registered.map(tool => [tool.name, tool]))
+  const start = tools.get('scout_start')
+  const exportTool = tools.get('scout_export')
+
+  await start.execute({
+    caseId: 'auto',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: '',
+  }, { agent: { id: 'session-a' } })
+
+  // autoPersist wrote the five files under scoutDir/<caseId>
+  assert.ok(store.has('/tmp/scout-cases/auto/case.json'))
+  assert.ok(store.has('/tmp/scout-cases/auto/report.md'))
+  assert.equal(store.size, 5)
+
+  // export without targetDir uses the configured scoutDir/<caseId>
+  const exportResult = JSON.parse(await exportTool.execute({
+    caseId: 'auto',
+  }, { agent: { id: 'session-a' } }))
+  assert.equal(exportResult.targetDir, '/tmp/scout-cases/auto')
+  assert.equal(exportResult.persisted, true)
+  assert.equal(exportResult.files.length, 5)
+})
+
+test('scout_questions tool returns the derived question list', async () => {
+  const registered = []
+  apply({
+    tools: {
+      register(tool) {
+        registered.push(tool)
+        return () => undefined
+      },
+    },
+    effect(execute) {
+      Array.from(execute())
+    },
+  })
+  const tools = new Map(registered.map(tool => [tool.name, tool]))
+  const start = tools.get('scout_start')
+  const questions = tools.get('scout_questions')
+  await start.execute({
+    caseId: 'demo',
+    companyName: 'Example Co',
+    roleTitle: 'HR Head',
+    location: '',
+  }, { agent: { id: 'session-a' } })
+  const result = JSON.parse(await questions.execute({ caseId: 'demo' }, { agent: { id: 'session-a' } }))
+  assert.ok(Array.isArray(result))
+  assert.ok(result.length >= 5)
 })

@@ -3,7 +3,7 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 16 passing](https://img.shields.io/badge/tests-16%20passing-green)](tests/model.test.mjs)
+[![tests 19 passing](https://img.shields.io/badge/tests-19%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -98,6 +98,7 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 | `scout_verify_identity` | 用 E3 官方源核验法定主体 |
 | `scout_verify_claim` | 用更强证据提升主张为 verified |
 | `scout_report` | 渲染当前 Markdown 报告 |
+| `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单 |
 | `scout_export` | 持久化五文件导出（case/sources/claims/events/report） |
 | `scout_import` | 从导出目录恢复案例并重算决策 |
 
@@ -110,7 +111,21 @@ dsh --profile scout-demo --dump-config   # 验证工具挂载
 
 要求：Node ≥ 22.19；面向 `@deepseek-ai/dsh-tools` `0.1.0-rc.6` 与 `@deepseek-ai/cordis` `4.0.x`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
 
-## 数据持久化（v0.2）
+## 配置（可选）
+
+在 DSH profile 的 `cordis.patch.yml` 中为 `dsh-scout` 配置：
+
+```yaml
+- id: dsh-scout
+  config:
+    scoutDir: /path/to/scout-cases   # 默认导出目录；case 落在 <scoutDir>/<caseId>/
+    autoPersist: true                # 每次变更后自动写五文件（默认 false）
+```
+
+- `scoutDir` 未配置时，`scout_export` 省略 `targetDir` 会写到 `./dsh-scout/<caseId>/`；
+- `autoPersist: true` 时，每次 `scout_start` / `scout_add_source` / `scout_add_claim` / `scout_verify_*` 后自动落盘（写失败不影响主流程，报告会如实反映）。
+
+## 数据持久化（v0.2 / v0.3）
 
 案例默认在内存中、按会话隔离；`scout_export` 把案例写为五个文件：
 
@@ -137,7 +152,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 16 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返
+pnpm test        # 19 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题
 pnpm run check:release
 ```
 
@@ -145,7 +160,8 @@ pnpm run check:release
 
 - ✅ v0.1：证据纪律、三态决策、结构化报告、会话隔离
 - ✅ v0.2：五文件持久化导出 + 事件流 + 导入恢复
-- ⏳ 下一阶段：可配置存储目录、Provider 支持的信息采集
+- ✅ v0.3：可配置存储（`scoutDir` / `autoPersist`）+ 面试问题生成（`scout_questions`）
+- ⏳ 下一阶段：Provider 支持的信息采集（把搜索/浏览器结果自动登记为来源）
 
 ## 社区
 

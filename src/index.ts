@@ -12,6 +12,7 @@ import {
   EVIDENCE_LEVELS,
   EXPORT_FILE_NAMES,
   exportCaseFiles,
+  generateInterviewQuestions,
   importCaseFromFiles,
   renderReport,
   SOURCE_TYPES,
@@ -24,6 +25,13 @@ import {
 
 export const name = 'dsh-scout'
 export const inject = ['tools', 'fs']
+
+export interface ScoutConfig {
+  /** Default directory for case exports; case files land under `<scoutDir>/<caseId>/`. */
+  scoutDir?: string
+  /** Persist the five-file export after every mutation when `scoutDir` is set. */
+  autoPersist?: boolean
+}
 
 interface ScoutFsTarget {
   targetKey: string
@@ -40,7 +48,7 @@ interface ScoutFs {
   ): Promise<{ operation: string }>
 }
 
-export function apply(ctx: Context) {
+export function apply(ctx: Context, config: ScoutConfig = {}) {
   const cases = new Map<string, ScoutCase>()
   const caseKey = (caseId: string, agentId: unknown) => `${String(agentId ?? 'unscoped')}::${caseId}`
   const requireCase = (key: string) => {
@@ -49,6 +57,21 @@ export function apply(ctx: Context) {
     return scoutCase
   }
   const fs = (ctx as unknown as { fs?: ScoutFs }).fs
+  const defaultScoutDir = config.scoutDir?.replace(/\/+$/, '') || 'dsh-scout'
+  const caseExportDir = (caseId: string) => `${defaultScoutDir}/${caseId}`
+  const persistFiles = async (scoutCase: ScoutCase, targetDir: string): Promise<{ persisted: boolean; targetDir: string; error?: string }> => {
+    if (!fs) return { persisted: false, targetDir, error: 'Filesystem service is unavailable in this host' }
+    try {
+      const files = exportCaseFiles(scoutCase)
+      for (const name of EXPORT_FILE_NAMES) {
+        const target = await fs.resolve(`${targetDir}/${name}`)
+        await fs.writeText(target, files[name])
+      }
+      return { persisted: true, targetDir }
+    } catch (error) {
+      return { persisted: false, targetDir, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
   const recordEvent = (scoutCase: ScoutCase, type: ScoutEvent['type'], detail: Record<string, unknown>) =>
     appendEvent(scoutCase, {
       eventId: `evt-${(scoutCase.events?.length ?? 0) + 1}`,
@@ -56,6 +79,12 @@ export function apply(ctx: Context) {
       at: new Date().toISOString(),
       detail,
     })
+  const maybePersist = async (scoutCase: ScoutCase) => {
+    if (!config.autoPersist) return scoutCase
+    const result = await persistFiles(scoutCase, caseExportDir(scoutCase.caseId))
+    if (!result.persisted) return scoutCase
+    return recordEvent(scoutCase, 'case_exported', { targetDir: result.targetDir, auto: true })
+  }
 
   ctx.effect(function* registerScoutTools() {
     yield () => cases.clear()
@@ -82,11 +111,13 @@ export function apply(ctx: Context) {
           roleTitle: args.roleTitle,
           location: args.location || undefined,
         })
-        cases.set(key, recordEvent(scoutCase, 'case_started', {
+        let nextCase = recordEvent(scoutCase, 'case_started', {
           companyName: args.companyName,
           roleTitle: args.roleTitle,
           location: args.location || null,
-        }))
+        })
+        nextCase = await maybePersist(nextCase)
+        cases.set(key, nextCase)
         return JSON.stringify(scoutCase, null, 2)
       },
     }))
@@ -113,7 +144,7 @@ export function apply(ctx: Context) {
       async execute(args, exec) {
         const key = caseKey(args.caseId, exec.agent?.id)
         const scoutCase = requireCase(key)
-        const nextCase = decideCase(addClaim(scoutCase, {
+        let nextCase = recordEvent(decideCase(addClaim(scoutCase, {
           claimId: args.claimId,
           text: args.text,
           status: args.status,
@@ -123,14 +154,15 @@ export function apply(ctx: Context) {
           sourceIds: args.sourceIds ? args.sourceIds.split(',').map(value => value.trim()).filter(Boolean) : [],
           confidenceNote: args.confidenceNote,
           nextAction: args.nextAction,
-        }))
-        cases.set(key, recordEvent(nextCase, 'claim_added', {
+        })), 'claim_added', {
           claimId: args.claimId,
           status: args.status,
           evidenceLevel: args.evidenceLevel,
           dimension: args.dimension,
           impact: args.impact,
-        }))
+        })
+        nextCase = await maybePersist(nextCase)
+        cases.set(key, nextCase)
         return JSON.stringify(nextCase, null, 2)
       },
     }))
@@ -153,34 +185,48 @@ export function apply(ctx: Context) {
 
     yield ctx.tools.register(defineTool({
       name: 'scout_export',
-      description: 'Persist a dsh-scout case as the durable five-file export (case.json, sources.json, claims.json, events.jsonl, report.md) into a target directory.',
+      description: 'Persist a dsh-scout case as the durable five-file export (case.json, sources.json, claims.json, events.jsonl, report.md). targetDir is optional and defaults to the configured scoutDir (or ./dsh-scout) plus the case id.',
       parameters: {
         caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
-        targetDir: { type: 'string', required: true, description: 'Directory path to write the five export files into.' },
+        targetDir: { type: 'string', description: 'Directory path to write the five export files into; defaults to <scoutDir>/<caseId>.' },
       },
       output: {
         schema: { type: 'string' },
         render: (_args, value) => [{ type: 'text', text: value }],
       },
       async execute(args, exec) {
-        if (!fs) throw new Error('Filesystem service is unavailable in this host')
         const key = caseKey(args.caseId, exec.agent?.id)
         const scoutCase = requireCase(key)
-        const files = exportCaseFiles(scoutCase)
-        const target = await fs.resolve(args.targetDir)
-        const written: string[] = []
-        for (const name of EXPORT_FILE_NAMES) {
-          const fileTarget = await fs.resolve(`${target.displayPath}/${name}`)
-          await fs.writeText(fileTarget, files[name])
-          written.push(name)
+        const targetDir = args.targetDir || caseExportDir(scoutCase.caseId)
+        const result = await persistFiles(scoutCase, targetDir)
+        let nextCase = scoutCase
+        if (result.persisted) {
+          nextCase = recordEvent(scoutCase, 'case_exported', { targetDir: result.targetDir })
+          cases.set(key, nextCase)
         }
-        const nextCase = recordEvent(scoutCase, 'case_exported', { targetDir: target.displayPath })
-        cases.set(key, nextCase)
         return JSON.stringify({
           caseId: args.caseId,
-          targetDir: target.displayPath,
-          files: written,
+          targetDir: result.targetDir,
+          files: EXPORT_FILE_NAMES,
+          persisted: result.persisted,
+          ...(result.error ? { error: result.error } : {}),
         }, null, 2)
+      },
+    }))
+
+    yield ctx.tools.register(defineTool({
+      name: 'scout_questions',
+      description: 'Derive a deduplicated, prioritized interview question list from the case: unverified blocking/material next actions first, then questions for missing required role dimensions, then the default interview questions.',
+      parameters: {
+        caseId: { type: 'string', required: true, description: 'Existing case identifier.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args, exec) {
+        const key = caseKey(args.caseId, exec.agent?.id)
+        return JSON.stringify(generateInterviewQuestions(requireCase(key)), null, 2)
       },
     }))
 
@@ -243,10 +289,12 @@ export function apply(ctx: Context) {
           evidenceLevel: args.evidenceLevel,
           status: 'captured',
         }
-        cases.set(key, recordEvent(addSource(scoutCase, source), 'source_added', {
+        let nextCase = recordEvent(addSource(scoutCase, source), 'source_added', {
           sourceId: source.sourceId,
           evidenceLevel: source.evidenceLevel,
-        }))
+        })
+        nextCase = await maybePersist(nextCase)
+        cases.set(key, nextCase)
         return JSON.stringify(source, null, 2)
       },
     }))
@@ -270,18 +318,19 @@ export function apply(ctx: Context) {
       async execute(args, exec) {
         const key = caseKey(args.caseId, exec.agent?.id)
         const scoutCase = requireCase(key)
-        const nextCase = decideCase(verifyIdentity(scoutCase, {
+        let nextCase = recordEvent(decideCase(verifyIdentity(scoutCase, {
           legalEntity: args.legalEntity,
           registrationNumber: args.registrationNumber,
           registeredRegion: args.registeredRegion,
           legalRepresentative: args.legalRepresentative,
           brandRelationship: args.brandRelationship,
           sourceIds: args.sourceIds.split(',').map(value => value.trim()).filter(Boolean),
-        }))
-        cases.set(key, recordEvent(nextCase, 'identity_verified', {
+        })), 'identity_verified', {
           legalEntity: args.legalEntity,
           registrationNumber: args.registrationNumber,
-        }))
+        })
+        nextCase = await maybePersist(nextCase)
+        cases.set(key, nextCase)
         return JSON.stringify(nextCase, null, 2)
       },
     }))
@@ -304,17 +353,18 @@ export function apply(ctx: Context) {
       async execute(args, exec) {
         const key = caseKey(args.caseId, exec.agent?.id)
         const scoutCase = requireCase(key)
-        const nextCase = decideCase(verifyClaim(scoutCase, {
+        let nextCase = recordEvent(decideCase(verifyClaim(scoutCase, {
           claimId: args.claimId,
           evidenceLevel: args.evidenceLevel,
           sourceIds: args.sourceIds.split(',').map(value => value.trim()).filter(Boolean),
           confidenceNote: args.confidenceNote,
           nextAction: args.nextAction,
-        }))
-        cases.set(key, recordEvent(nextCase, 'claim_verified', {
+        })), 'claim_verified', {
           claimId: args.claimId,
           evidenceLevel: args.evidenceLevel,
-        }))
+        })
+        nextCase = await maybePersist(nextCase)
+        cases.set(key, nextCase)
         return JSON.stringify(nextCase, null, 2)
       },
     }))
