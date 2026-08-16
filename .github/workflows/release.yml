@@ -41,9 +41,12 @@ jobs:
         with:
           files: dsh-scout-*.tgz
           generate_release_notes: true
+          update_release: true
 
       - name: Publish to npm (only when the NPM_TOKEN secret is configured)
         if: env.NPM_TOKEN != ''
-        run: npm publish --provenance --access public
+        run: |
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' >> .npmrc
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
