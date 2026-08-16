@@ -1,6 +1,6 @@
 {
   "name": "dsh-scout",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Evidence-driven company and job intelligence plugin for DeepSeek Harness.",
   "license": "MIT",
   "type": "module",
