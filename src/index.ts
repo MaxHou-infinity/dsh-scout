@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import z from '@deepseek-ai/schemastery'
 import {
   addClaim,
   addSource,
@@ -9,6 +10,7 @@ import {
   CLAIM_STATUSES,
   createCase,
   decideCase,
+  DEFAULT_AUTHORITY_HOST_SUFFIXES,
   EVIDENCE_LEVELS,
   EXPORT_FILE_NAMES,
   exportCaseFiles,
@@ -32,14 +34,22 @@ import {
 } from './model.js'
 
 export const name = 'dsh-scout'
-export const inject = ['tools', 'fs', 'web']
+export const inject = ['tools']
 
-export interface ScoutConfig {
+export interface Config {
   /** Default directory for case exports; case files land under `<scoutDir>/<caseId>/`. */
   scoutDir?: string
   /** Persist the five-file export after every mutation when `scoutDir` is set. */
   autoPersist?: boolean
+  /** Trusted authority host suffixes used by the E3 evidence policy. */
+  authorityHostSuffixes?: readonly string[]
 }
+
+export const Config = z.object({
+  scoutDir: z.string().default('dsh-scout'),
+  autoPersist: z.boolean().default(false),
+  authorityHostSuffixes: z.array(z.string()).default([...DEFAULT_AUTHORITY_HOST_SUFFIXES]),
+})
 
 interface ScoutFsTarget {
   targetKey: string
@@ -72,7 +82,7 @@ interface ScoutWeb {
   fetch(request: { url: string }, signal?: unknown): Promise<unknown>
 }
 
-export function apply(ctx: Context, config: ScoutConfig = {}) {
+export function apply(ctx: Context, config: Config = {}) {
   const cases = new Map<string, ScoutCase>()
   const caseKey = (caseId: string, agentId: unknown) => `${String(agentId ?? 'unscoped')}::${caseId}`
   const requireCase = (key: string) => {
@@ -80,8 +90,11 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
     if (!scoutCase) throw new Error(`Unknown case: ${key.split('::').at(-1)}`)
     return scoutCase
   }
-  const fs = (ctx as unknown as { fs?: ScoutFs }).fs
-  const web = (ctx as unknown as { web?: ScoutWeb }).web
+  // Optional host services: unavailable hosts degrade gracefully (tools report
+  // the missing service instead of failing to register).
+  const fs = ctx.get('fs') as ScoutFs | undefined
+  const web = ctx.get('web') as ScoutWeb | undefined
+  const authoritySuffixes = config.authorityHostSuffixes ?? DEFAULT_AUTHORITY_HOST_SUFFIXES
   const defaultScoutDir = config.scoutDir?.replace(/\/+$/, '') || 'dsh-scout'
   const caseExportDir = (caseId: string) => `${defaultScoutDir}/${caseId}`
   const persistFiles = async (scoutCase: ScoutCase, targetDir: string): Promise<{ persisted: boolean; targetDir: string; error?: string }> => {
@@ -113,7 +126,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
     })
   }
   const registerSource = (scoutCase: ScoutCase, source: ScoutSource): ScoutCase =>
-    recordEvent(addSource(scoutCase, source), 'source_added', {
+    recordEvent(addSource(scoutCase, source, authoritySuffixes), 'source_added', {
       sourceId: source.sourceId,
       type: source.type,
       title: source.title,
@@ -267,8 +280,8 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
               errors.push({ url, error: `invalid evidenceLevel: ${String(item.evidenceLevel)}` })
               continue
             }
-            const typeGuess = inferSourceType(url, explicitType)
-            const levelGuess = inferEvidenceLevel(url, typeGuess.type, explicitLevel)
+            const typeGuess = inferSourceType(url, explicitType, authoritySuffixes)
+            const levelGuess = inferEvidenceLevel(url, typeGuess.type, explicitLevel, authoritySuffixes)
             let sourceId = `src-${nextId}`
             while (scoutCase.sources.some(source => source.sourceId === sourceId)) {
               nextId += 1
@@ -408,8 +421,8 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
             return
           }
           try {
-            const typeGuess = inferSourceType(url)
-            const levelGuess = inferEvidenceLevel(url, typeGuess.type)
+            const typeGuess = inferSourceType(url, undefined, authoritySuffixes)
+            const levelGuess = inferEvidenceLevel(url, typeGuess.type, undefined, authoritySuffixes)
             let sourceId = `src-${nextId}`
             while (scoutCase.sources.some(source => source.sourceId === sourceId)) {
               nextId += 1
@@ -602,7 +615,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
           evidenceLevel: args.evidenceLevel,
           status: 'captured',
         }
-        let nextCase = recordEvent(addSource(scoutCase, source), 'source_added', {
+        let nextCase = recordEvent(addSource(scoutCase, source, authoritySuffixes), 'source_added', {
           sourceId: source.sourceId,
           evidenceLevel: source.evidenceLevel,
         })
@@ -638,7 +651,7 @@ export function apply(ctx: Context, config: ScoutConfig = {}) {
           legalRepresentative: args.legalRepresentative,
           brandRelationship: args.brandRelationship,
           sourceIds: args.sourceIds.split(',').map(value => value.trim()).filter(Boolean),
-        })), 'identity_verified', {
+        }, authoritySuffixes)), 'identity_verified', {
           legalEntity: args.legalEntity,
           registrationNumber: args.registrationNumber,
         })

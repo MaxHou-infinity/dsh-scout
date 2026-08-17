@@ -18,7 +18,7 @@ import {
   verifyClaim,
   verifyIdentity,
 } from '../dist/model.js'
-import { apply, inject, name } from '../dist/index.js'
+import { apply, Config, inject, name } from '../dist/index.js'
 
 test('starts conservatively until company identity is verified', () => {
   const scoutCase = createCase({
@@ -327,6 +327,7 @@ test('only proceeds after identity and all required role dimensions are verified
 test('isolates identical case ids by DSH agent session identity', async () => {
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: {
       register(tool) {
         registered.push(tool)
@@ -413,6 +414,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
   const disposed = []
   const effects = []
   apply({
+    get(name) { return this[name] },
     tools: {
       register(tool) {
         registered.push(tool)
@@ -425,7 +427,7 @@ test('exports a disposable DSH plugin tool surface', async () => {  const regist
   })
 
   assert.equal(name, 'dsh-scout')
-  assert.deepEqual(inject, ['tools', 'fs', 'web'])
+  assert.deepEqual(inject, ['tools'])
   assert.deepEqual(
     registered.map(tool => tool.name).sort(),
     [
@@ -521,6 +523,7 @@ test('exports and imports a case through the fs-backed tools', async () => {
     },
   }
   apply({
+    get(name) { return this[name] },
     tools: {
       register(tool) {
         registered.push(tool)
@@ -651,6 +654,7 @@ test('auto-persists each mutation when configured, and exports to the default di
     },
   }
   apply({
+    get(name) { return this[name] },
     tools: {
       register(tool) {
         registered.push(tool)
@@ -690,6 +694,7 @@ test('auto-persists each mutation when configured, and exports to the default di
 test('scout_questions tool returns the derived question list', async () => {
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: {
       register(tool) {
         registered.push(tool)
@@ -718,6 +723,7 @@ test('auto-persist and default export dir degrade gracefully without fs or scout
   // autoPersist enabled but no fs service: mutations still succeed
   const noFs = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { noFs.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   }, { scoutDir: '/nowhere', autoPersist: true })
@@ -743,6 +749,7 @@ test('auto-persist and default export dir degrade gracefully without fs or scout
     async writeText(target, content) { store.set(target.displayPath, content); return { operation: 'create' } },
   }
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     fs: mockFs,
     effect(execute) { Array.from(execute()) },
@@ -854,6 +861,7 @@ test('infers source type and evidence level from URLs', () => {
 test('scout_ingest batch-registers sources with inference and isolates errors', async () => {
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -906,6 +914,7 @@ test('scout_ingest isolates null items and invalid explicit enums, and avoids su
 
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -999,6 +1008,7 @@ test('scout_compare tool compares cases and inference rejects invalid explicit e
 
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -1020,6 +1030,7 @@ test('scout_compare tool compares cases and inference rejects invalid explicit e
 test('scout_compare deduplicates case ids and empty claims render cleanly', async () => {
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -1068,6 +1079,7 @@ test('scout_ingest drafts claims from items alongside sources', async () => {
 
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -1115,6 +1127,7 @@ test('scout_ingest drafts claims from items alongside sources', async () => {
 test('scout_ingest rejects invalid claim enums explicitly and keeps claim ids collision-safe', async () => {
   const registered = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -1167,6 +1180,7 @@ test('covers registry boundaries, non-object claims, and verified-E0 rejection v
   const registered = []
   const store = new Map()
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     fs: {
       async resolve(path) { return { targetKey: path, displayPath: path } },
@@ -1211,6 +1225,7 @@ test('scout_search registers provider results as sources and requires the web se
   const registered = []
   const searched = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     web: {
       async search(request) {
@@ -1259,6 +1274,7 @@ test('scout_search registers provider results as sources and requires the web se
   // web service missing -> explicit error
   const noWeb = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { noWeb.push(tool); return () => undefined } },
     effect(execute) { Array.from(execute()) },
   })
@@ -1277,6 +1293,7 @@ test('scout_search handles provider edge cases and limit bounds', async () => {
   const providerCalls = []
   let failSearch = false
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { registered.push(tool); return () => undefined } },
     web: {
       async search(request) {
@@ -1339,6 +1356,7 @@ test('scout_search handles provider edge cases and limit bounds', async () => {
   // non-array sources -> reported as an error, tool still succeeds
   const noArray = []
   apply({
+    get(name) { return this[name] },
     tools: { register(tool) { noArray.push(tool); return () => undefined } },
     web: { async search() { return { sources: 'nope' } } },
     effect(execute) { Array.from(execute()) },
@@ -1353,4 +1371,51 @@ test('scout_search handles provider edge cases and limit bounds', async () => {
   ))
   assert.equal(nonArray.added.length, 0)
   assert.match(nonArray.errors[0].error, /non-array sources/)
+})
+
+test('exports a schemastery Config with sensible defaults', () => {
+  const parsed = Config({})
+  assert.equal(parsed.scoutDir, 'dsh-scout')
+  assert.equal(parsed.autoPersist, false)
+  assert.ok(parsed.authorityHostSuffixes.includes('gov.cn'))
+  assert.ok(parsed.authorityHostSuffixes.includes('gsxt.gov.cn') === false)
+})
+
+test('custom authority host suffixes extend the E3 trust boundary', async () => {
+  const registered = []
+  apply({
+    get(name) { return this[name] },
+    tools: {
+      register(tool) {
+        registered.push(tool)
+        return () => undefined
+      },
+    },
+    effect(execute) {
+      Array.from(execute())
+    },
+  }, {
+    authorityHostSuffixes: ['example-registry.example'],
+  })
+  const tools = new Map(registered.map(tool => [tool.name, tool]))
+  const start = tools.get('scout_start')
+  const addSource = tools.get('scout_add_source')
+  await start.execute({
+    caseId: 'custom-trust',
+    companyName: 'Custom Co',
+    roleTitle: 'Role',
+    location: '',
+  }, { agent: { id: 'session-a' } })
+  // The configured suffix makes this registry origin a valid E3 source.
+  const result = await addSource.execute({
+    caseId: 'custom-trust',
+    sourceId: 'registry',
+    sourceType: 'company_registry',
+    title: 'Custom registry',
+    url: 'https://registry.example-registry.example/rec/1',
+    evidenceLevel: 'E3',
+  }, { agent: { id: 'session-a' } })
+  assert.match(result, /"evidenceLevel": "E3"/)
+  // The default trust boundary still rejects the same origin without the override.
+  assert.equal(isTrustedAuthorityUrl('https://registry.example-registry.example/rec/1'), false)
 })

@@ -79,7 +79,8 @@ const JOB_PLATFORM_HOST_HINTS = [
   'jobs.feishu.cn',
 ]
 
-const AUTHORITY_HOST_SUFFIXES = [
+/** Default trusted authority host suffixes used by the E3 evidence policy. */
+export const DEFAULT_AUTHORITY_HOST_SUFFIXES = [
   'gov',
   'gov.cn',
   'gov.uk',
@@ -202,27 +203,34 @@ export function createCase(input: {
   }
 }
 
-export function addSource(scoutCase: ScoutCase, source: ScoutSource): ScoutCase {
+export function addSource(
+  scoutCase: ScoutCase,
+  source: ScoutSource,
+  authoritySuffixes: readonly string[] = DEFAULT_AUTHORITY_HOST_SUFFIXES,
+): ScoutCase {
   if (scoutCase.sources.some(item => item.sourceId === source.sourceId)) {
     throw new Error(`Duplicate source: ${source.sourceId}`)
   }
   if (
     source.evidenceLevel === 'E3'
-    && (!IDENTITY_SOURCE_TYPES.has(source.type) || !isTrustedAuthorityUrl(source.url))
+    && (!IDENTITY_SOURCE_TYPES.has(source.type) || !isTrustedAuthorityUrl(source.url, authoritySuffixes))
   ) {
     throw new Error('E3 sources require a supported registry, regulator, or official filing HTTPS origin')
   }
   return { ...scoutCase, sources: [...scoutCase.sources, source] }
 }
 
-export function isTrustedAuthorityUrl(value: string | null): boolean {
+export function isTrustedAuthorityUrl(
+  value: string | null,
+  authoritySuffixes: readonly string[] = DEFAULT_AUTHORITY_HOST_SUFFIXES,
+): boolean {
   if (!value) return false
   try {
     const url = new URL(value)
     if (url.protocol !== 'https:' || url.username || url.password) return false
     if (url.port && url.port !== '443') return false
     const hostname = url.hostname.toLowerCase().replace(/\.$/, '')
-    return AUTHORITY_HOST_SUFFIXES.some(suffix =>
+    return authoritySuffixes.some(suffix =>
       hostname === suffix || hostname.endsWith(`.${suffix}`),
     )
   } catch {
@@ -234,13 +242,14 @@ export function isTrustedAuthorityUrl(value: string | null): boolean {
 export function inferSourceType(
   url: string | null,
   explicit?: SourceType,
+  authoritySuffixes: readonly string[] = DEFAULT_AUTHORITY_HOST_SUFFIXES,
 ): { type: SourceType; inferred: boolean } {
   if (explicit && SOURCE_TYPES.includes(explicit)) return { type: explicit, inferred: false }
   if (url) {
     try {
       const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, '')
       // Trusted authority origins (official registry/regulator) take priority.
-      if (isTrustedAuthorityUrl(url)) {
+      if (isTrustedAuthorityUrl(url, authoritySuffixes)) {
         const isRegistry = REGISTRY_HOST_SUFFIXES.some(suffix => hostname === suffix || hostname.endsWith(`.${suffix}`))
         return { type: isRegistry ? 'company_registry' : 'regulator', inferred: true }
       }
@@ -260,9 +269,10 @@ export function inferEvidenceLevel(
   url: string | null,
   type: SourceType,
   explicit?: EvidenceLevel,
+  authoritySuffixes: readonly string[] = DEFAULT_AUTHORITY_HOST_SUFFIXES,
 ): { evidenceLevel: EvidenceLevel; inferred: boolean } {
   if (explicit && EVIDENCE_LEVELS.includes(explicit)) return { evidenceLevel: explicit, inferred: false }
-  if (IDENTITY_SOURCE_TYPES.has(type) && isTrustedAuthorityUrl(url)) {
+  if (IDENTITY_SOURCE_TYPES.has(type) && isTrustedAuthorityUrl(url, authoritySuffixes)) {
     return { evidenceLevel: 'E3', inferred: true }
   }
   if (type === 'user_provided') {
@@ -352,6 +362,7 @@ export function verifyIdentity(
     brandRelationship: string
     sourceIds: string[]
   },
+  authoritySuffixes: readonly string[] = DEFAULT_AUTHORITY_HOST_SUFFIXES,
 ): ScoutCase {
   const requiredValues = [
     input.legalEntity,
@@ -374,7 +385,7 @@ export function verifyIdentity(
   const hasAuthoritativeSource = sources.some(source =>
     source.evidenceLevel === 'E3'
     && IDENTITY_SOURCE_TYPES.has(source.type)
-    && isTrustedAuthorityUrl(source.url),
+    && isTrustedAuthorityUrl(source.url, authoritySuffixes),
   )
   if (!hasAuthoritativeSource) {
     throw new Error('Company identity verification requires a linked E3 registry, regulator, or official filing source')
