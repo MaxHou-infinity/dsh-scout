@@ -3,8 +3,8 @@
 [![ci](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
-[![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 32 passing](https://img.shields.io/badge/tests-32%20passing-green)](tests/model.test.mjs)
+[![dsh-tools 0.1.2-rc.1](https://img.shields.io/badge/dsh-tools-0.1.2--rc.1-4b32c3)](package.json)
+[![tests 34 passing](https://img.shields.io/badge/tests-34%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
@@ -119,7 +119,7 @@ dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 dsh --profile scout-demo --dump-config   # 验证工具挂载
 ```
 
-要求：Node ≥ 22.19；面向 `@deepseek-ai/dsh-tools` `0.1.0-rc.6` 与 `@deepseek-ai/cordis` `4.0.x`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
+要求：Node ≥ 22.19；面向 DeepSeek Harness `0.1.2-rc.1`、`@deepseek-ai/dsh-tools` `0.1.2-rc.1` 与 `@deepseek-ai/cordis` `4.0.2+`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
 
 ## 配置（可选）
 
@@ -162,7 +162,7 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 32 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转
+pnpm test        # 34 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转
 pnpm run check:release
 ```
 

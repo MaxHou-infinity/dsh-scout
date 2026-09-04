@@ -3,8 +3,8 @@
 [![ci](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
-[![dsh-tools 0.1.0-rc.6](https://img.shields.io/badge/dsh-tools-0.1.0--rc.6-4b32c3)](package.json)
-[![tests 32 passing](https://img.shields.io/badge/tests-32%20passing-green)](tests/model.test.mjs)
+[![dsh-tools 0.1.2-rc.1](https://img.shields.io/badge/dsh-tools-0.1.2--rc.1-4b32c3)](package.json)
+[![tests 34 passing](https://img.shields.io/badge/tests-34%20passing-green)](tests/model.test.mjs)
 [![中文 README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-2ea44f)](README.md)
 
 **司察（Scout）** — evidence-driven company & job due-diligence plugin for [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness).
@@ -49,7 +49,7 @@ pnpm test
 pnpm run check:release
 ```
 
-The tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, auto-persist, question generation, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into an isolated temporary DSH profile, verifies `--dump-config`, checks the mounted tools, and observes the Cordis unload disposer. The gate uses `DSH_BIN` or a local `dsh` binary when available; otherwise it downloads the exact official CLI version `0.1.0-rc.6` through `npx`.
+The tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, auto-persist, question generation, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into an isolated temporary DSH profile, verifies `--dump-config`, checks the mounted tools, and observes the Cordis unload disposer. The gate uses `DSH_BIN` or a local `dsh` binary when available; otherwise it downloads the exact official CLI version `0.1.2-rc.1` through `npx`.
 
 ## Install into a DSH profile
 
@@ -60,7 +60,7 @@ dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 dsh --profile scout-demo --dump-config
 ```
 
-Git installs fetch source and run `prepare`. pnpm may require an explicit `allowBuilds` entry for `dsh-scout`; only allow a pinned source you have reviewed. The current package targets `@deepseek-ai/dsh-tools` `0.1.0-rc.6` and `@deepseek-ai/cordis` `4.0.x`.
+Git installs fetch source and run `prepare`. pnpm may require an explicit `allowBuilds` entry for `dsh-scout`; only allow a pinned source you have reviewed. The current package targets DeepSeek Harness `0.1.2-rc.1`, `@deepseek-ai/dsh-tools` `0.1.2-rc.1`, and `@deepseek-ai/cordis` `4.0.2+`.
 
 ## Configuration (optional)
 

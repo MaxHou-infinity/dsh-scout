@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-const DSH_VERSION = '0.1.0-rc.6'
+const DSH_VERSION = '0.1.2-rc.1'
 const command = name => process.platform === 'win32' ? `${name}.cmd` : name
 const localDsh = join(process.cwd(), 'node_modules', '.bin', command('dsh'))
 const dshCommand = process.env.DSH_BIN
