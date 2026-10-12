@@ -1,7 +1,8 @@
 {
   "name": "dsh-scout",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Evidence-driven company and job intelligence plugin for DeepSeek Harness.",
+  "icon": "./assets/icon.svg",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -12,11 +13,15 @@
       "default": "./dist/index.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "cordis.patch.yml",
+    "locale",
+    "assets",
     "scripts/check-release.mjs",
     "scripts/profile-smoke.mjs",
     "README.md",
@@ -24,7 +29,11 @@
     "docs/dsh-scout-product-contract.md",
     "docs/fixtures/dsh-scout/snapmaker-hr-head.json",
     "tests/model.test.mjs",
-    "README.en.md"
+    "tests/package.test.mjs",
+    "tests/tools.test.mjs",
+    "tests/acceptance.test.mjs",
+    "README.en.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -35,7 +44,8 @@
     "prepare": "npm run build"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=22.19.0",
+    "dsh": ">=0.1.0-rc.6 <0.3.0-0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.2 <5",
@@ -58,6 +68,7 @@
     "@deepseek-ai/schemastery": "^3.18.2"
   },
   "dsh": {
+    "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
     }

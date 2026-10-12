@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="dsh-scout-icon-title">
+  <title id="dsh-scout-icon-title">司察 Scout — evidence-driven due diligence</title>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#4D6BFE"/>
+  <circle cx="26" cy="25.5" r="13" fill="#FFFFFF"/>
+  <path d="M34 33.5 L43.5 43" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+  <path d="M19.5 25.5 L24 30 L32.5 20" fill="none" stroke="#4D6BFE" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
