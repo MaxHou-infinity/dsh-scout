@@ -3,7 +3,18 @@
 状态：Draft 0.1
 目标：把公司与岗位尽调收敛为一个可复现、可追溯、能支持下一步行动的 DSH 场景插件。
 
-当前实现进度：首个公开切片已经覆盖 session 隔离的内存 case、封闭来源类型、主体核验、claim 证据历史、保守三态决策、结构化报告、卸载清理和临时 DSH profile 安装门禁；v0.2 已落地持久化五文件导出（`scout_export` / `scout_import`，含可回放事件流 `events.jsonl` 与导入后决策重算）；v0.3 已落地可配置存储（`scoutDir` / `autoPersist` 插件配置）与面试问题生成（`scout_questions`）；v0.4 已落地信息采集登记（`scout_ingest`：批量登记采集结果并按 URL 自动推断来源类型与证据等级）；v0.5 已落地公司/岗位对比（`scout_compare`：2–5 案例并排对比报告与合并面试问题）；v0.6 已落地采集→主张流转（`scout_ingest` 支持 claim 草稿，登记来源同时自动添加主张）；v0.7 已落地 Provider 深度集成（`scout_search`：接入 DSH Web Provider，搜索结果自动登记为来源）。
+当前实现进度：首个公开切片已经覆盖 session 隔离的内存 case、封闭来源类型、主体核验、claim 证据历史、保守三态决策、结构化报告、卸载清理和临时 DSH profile 安装门禁；v0.2 已落地持久化五文件导出（`scout_export` / `scout_import`，含可回放事件流 `events.jsonl` 与导入后决策重算）；v0.3 已落地可配置存储（`scoutDir` / `autoPersist` 插件配置）与面试问题生成（`scout_questions`）；v0.4 已落地信息采集登记（`scout_ingest`：批量登记采集结果并按 URL 自动推断来源类型与证据等级）；v0.5 已落地公司/岗位对比（`scout_compare`：2–5 案例并排对比报告与合并面试问题）；v0.6 已落地采集→主张流转（`scout_ingest` 支持 claim 草稿，登记来源同时自动添加主张）；v0.7 已落地 Provider 深度集成（`scout_search`：接入 DSH Web Provider，搜索结果自动登记为来源）；v0.8.x 完成 npm 首发与 DSH 0.2 rc 通道对齐（`exports` 映射、Schemastery `Config` 声明、profile smoke 门禁）；v0.9.0 适配 DSH 0.2 运行时，并建立四个精确版本的兼容矩阵与夜间兼容检查。
+
+**v0.9.1（当前版本）**把插件从「能跑」推到「在真实 DSH 里表现正确、便宜、可解释」，主题是接缝而不是新功能：
+
+- **输出契约**：变更类工具不再回吐整份 case JSON，改为「结构化对象 `value` + <1KB 紧凑 render」；全量数据仍由 `scout_report` / `scout_export` 提供。
+- **落盘可信度**：`autoPersist` 失败可见化（返回值 `persist.persisted=false` + `persist.error`）；导出统一为「先记事件、后写文件」；导出目录写 `export.complete.json` 完成标记（**先置 `complete:false`、五文件写完再置 `complete:true`**）；`scout_import` 读标记的 `complete` 字段，缺失或不完整时报告 `complete: false`；写盘转发 `exec.signal`。
+- **服务绑定与路径**：`fs` / `web` 改为调用时解析（不再在 `apply()` 时快照）；导出返回解析后的绝对路径；缓存未命中时从 `<scoutDir>/<caseId>/` 惰性回填并记 `case_rehydrated`。
+- **可解释与双语**：新增 `language: 'zh-CN' | 'en'`（默认 `zh-CN`）；报告新增 `## Coverage` 调查覆盖度区块。
+- **显式入口**：新增 `/scout` 命令（`status` / `questions` / `report` / `export` 四个子动作）与插件注册的 `scout` Skill。
+- **分发契约**：`engines.dsh`、`dsh.manifestVersion: 1`、`locale/en.json` + `locale/zh.json`（必须写进 `exports`，否则被静默忽略）、包内 `icon`。
+
+0.9.1 明确不做的事见 [CHANGELOG](../CHANGELOG.md)：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分与排名。
 
 ## 1. 产品承诺
 
@@ -41,7 +52,12 @@ scout-cases/<case-id>/
   claims.json
   events.jsonl
   report.md
+  export.complete.json   # 0.9.1 起：完成标记（先置 complete:false，五文件落盘后改写 complete:true）
 ```
+
+0.9.1 起，五个数据文件之外还有一个完成标记 `export.complete.json`，内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`。写入顺序是：**先**把标记写成 `complete: false`，五个数据文件全部落盘后**再**改写为 `complete: true`。因此**陈旧标记不会为半份导出宣称完整**——在覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级为 `complete: false`。
+
+`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」：标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报告 `complete: false`，让调用方自己决定是否信任这份快照。也就是说：中断的导出只要五个数据文件都在，仍可导入，但会被如实标为不完整；五个数据文件缺任何一个（例如在写 `claims.json` 时中断的全新导出）仍是硬失败。
 
 首版不要求精确的总分。报告必须包含：
 
@@ -49,7 +65,7 @@ scout-cases/<case-id>/
 - 3 个支持判断的关键证据
 - 3 个阻断或待核验风险
 - 岗位可能的真实任务与权限假设
-- 5-10 个面试反问
+- 面试反问清单：**上限 12 条**；案例自带的精选问题**永远保留名额**，其余名额按「待办下一步 → 缺失必需维度 → 未调查维度」的优先级填充
 - 下一步最小核验动作
 
 ## 4. 证据模型
@@ -72,11 +88,28 @@ scout-cases/<case-id>/
 首版作为外部 bundle，优先使用现有工具、子 Agent、任务和文件系统能力：
 
 - 工具：启动 case、核验 claim、比较公司、生成面试问题、导出报告。
-- 事件观察：记录工具结果和来源归档，不重写 Agent Loop。
-- 配置：来源目录、报告目录、并发数、超时和输出语言必须是可配置字段。
+- 事件观察：记录工具结果和来源归档，不重写 Agent Loop。插件自己的 `events.jsonl` 事件只存在于导出文件里，**不写进 session log**（理由见 §5.1）。
+- 配置：来源目录、报告目录和输出语言必须是可配置字段。`scoutDir` / `autoPersist` 已在 v0.3 落地，`language`（`'zh-CN' | 'en'`，默认 `'zh-CN'`）在 0.9.1 落地。**并发数与超时 0.9.1 明确不做**：DSH 工具默认串行（未声明 `isConcurrencySafe` 即 exclusive），插件这一层没有可并发的调度面；超时按需在 0.10.0 引入。契约里的字段要么实现、要么写明为什么不做，不留未解释的占位。
 - 生命周期：所有 watcher、后台任务、连接和临时文件都必须在卸载时清理。
 
-首版不新增模型可见的持久化事件；如果未来需要让 case 状态进入模型上下文，必须为其设计可回放的 session event。
+### 5.1 撤回「自造 session event」计划（红线）
+
+0.9.0 的路线图曾写：「如果未来需要让 case 状态进入模型上下文，必须为其设计可回放的 session event」。**该计划在 DSH 0.2.0-rc.2 上撤回**——这不是取舍，而是硬约束：
+
+- 类型层确实开放：`SessionEventMap` 可以 declaration-merge，官方文档也写明「A plugin may declaration-merge extra `SessionEventMap` types」。但**落盘读路径不认**：`validateStoredEvents()` 对任何不在 `KNOWN_SESSION_EVENT_TYPES`（构建期生成的 59 个名字）内、且 `ignorable !== true` 的事件类型直接抛错（*refusing to interpret the log*，`@deepseek-ai/dsh-session-persistence/lib/index.js:184`）。
+- 而 `Session.append()` 构造的信封只有 `{ type, seq, time, data, …surfaceMetadata }`，**没有任何路径能写入 `ignorable`**（`@deepseek-ai/dsh-session/lib/index.js:1441-1459`；`surfaceMetadata` 只带 `sourceEventSeqs` / `surfaceOp`）。唯一例外是创建期的 seed 事件（`assertSessionEventEnvelope` 的白名单包含 `ignorable`，`dsh-session/lib/types/index.js:141,154`），活会话里追加没有出路。
+- 后果：插件自造的事件会让**插件自己写的会话在重启 / 恢复时无法重建**。一个主打「证据可追溯」的插件不能拿用户的会话日志去赌这个。
+
+### 5.2 替代路线：只用宿主已知词表内的接缝
+
+| 需求 | 0.2.0-rc.2 里可用的接缝 | 落地版本 |
+| --- | --- | --- |
+| 用户显式动作（`/scout status` / `questions` / `report` / `export`） | `ctx.commands.register(def)`；宿主在处理前后自动落 `command/run` + `command/done`，两个名字都在 `KNOWN_SESSION_EVENT_TYPES` 内 | 0.9.1 |
+| 结构化 UI 载荷 | `output.presentationMeta(args, value)` → 持久化在 `tool/result.meta`（无损 JSON，随会话日志走） | 0.10.0（0.9.1 不引入：没有 client 消费者时它没有可见收益） |
+| 跨会话 / 跨重启保存台账 | `ctx.storageDomain`（`defineDomain` + `ctx.storageDomain.open()`，读同步、写持久、`domain/changed` 有序） | 0.10.0（会改变 owner 语义，需与「case 是否跨会话共享」一起决策） |
+| 把「尽调方法」交给模型 | `ctx.skills.register({ name, description, content, … })`——无需落文件、无需 client bundle，卸载即消失 | 0.9.1 |
+
+> 一句话规则：**不要自造 session event。** 用户显式动作走 `command/run` + `command/done`，结构化 UI 载荷走 `output.presentationMeta` → `tool/result.meta`，持久状态走 `ctx.storageDomain`。
 
 ## 6. 明确非目标
 
@@ -86,6 +119,7 @@ scout-cases/<case-id>/
 - 不把个人简历、身份信息或求职意图默认发送给第三方服务。
 - 不提供法律、投资或医疗结论。
 - 不在首版实现完整 Web UI、实时数据库或公司评分排行榜。
+- client 面板与 `ctx.storageDomain` 持久化重写排在 **0.10.0**（见 §5.2）：后者要引入 domain schema、生命周期与迁移策略，并改变现在的 owner 语义（按 `SessionId` 分桶）。在它们落地之前，跨会话持久化仍由五文件导出 / 导入承担。
 
 ## 7. 首个验收案例
 

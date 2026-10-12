@@ -4,12 +4,17 @@
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
 [![DSH 兼容性夜间检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)
-[![tests 34 passing](https://img.shields.io/badge/tests-34%20passing-green)](tests/model.test.mjs)
+[![tests passing](https://img.shields.io/badge/tests-passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
 **司察（Scout）** —— 面向 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的**证据驱动型公司与岗位尽调 / 背调插件**。
 
 一句话说清楚：**它让 AI 帮你回答——"这家公司和这个岗位，值得进入下一轮吗？面试中还有哪些事项必须核验？"** 并且，每一个结论都挂靠真实的来源，绝不把"公司自述"或"融资新闻"当成已经核实的事实。
+
+## 命名
+
+- **Scout**：侦察兵先于你抵达目标——背调、尽调、取证、面试准备。包名与仓库名保持 `dsh-scout`，让安装引用稳定。
+- **司察**（sī-chá）："司"呼应 scout，"察"意为考察、明察，概括了这款插件"用证据调查一家公司与一个岗位"的核心动作。
 
 ---
 
@@ -68,8 +73,10 @@ scout_report / scout_questions  生成报告 / 派生面试问题
    │
 scout_compare        多个案例并排对比（决策/主体/风险/问题）
    │
-scout_export / scout_import  落盘持久化（五文件），换会话可恢复
+scout_export / scout_import  落盘持久化（五文件 + 完成标记），换会话可恢复
 ```
+
+也可以用显式入口驱动：`/scout status|questions|report|export`（见下文「命令与 Skill」）。
 
 ## 快速上手（一段完整示例）
 
@@ -91,11 +98,12 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 - **Key supporting evidence**：最有力的已核验结论
 - **Blocking or unresolved risks**：阻断推进的风险与未知项
 - **Verification checklist**：所有待核验的阻断/重要事项 + 各自的下一步动作（直接当面试行动清单用）
+- **Coverage（0.9.1 新增）**：11 个调查维度各自的「已核验 / 待核验 / 未调查」计数，并单列**未调查维度**——报告因此不只是证据清单，也是尽调进度
 - **Claim ledger**：全部结论台账（状态/证据等级/影响/来源/置信说明）
 - **Sources**：带 URL 的来源清单（可点击回溯）
-- **Interview questions**：建议的面试反问
+- **Interview questions**：建议的面试反问（未调查维度的问题优先）
 
-## 工具清单
+## 工具清单（12 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -107,32 +115,110 @@ scout_export / scout_import  落盘持久化（五文件），换会话可恢复
 | `scout_verify_identity` | 用 E3 官方源核验法定主体 |
 | `scout_verify_claim` | 用更强证据提升主张为 verified |
 | `scout_report` | 渲染当前 Markdown 报告 |
-| `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单（上限 12 条） |
+| `scout_questions` | 从案例派生去重、按优先级排序的面试问题清单（上限 12 条；案例自带的精选问题保留名额） |
 | `scout_compare` | 2–5 个案例的并排对比报告（决策/主体/关键结论/风险/面试问题） |
-| `scout_export` | 持久化五文件导出（case/sources/claims/events/report） |
-| `scout_import` | 从导出目录恢复案例并重算决策 |
+| `scout_export` | 持久化五文件导出（case/sources/claims/events/report）+ 完成标记 |
+| `scout_import` | 从导出目录恢复案例并重算决策（容忍旧导出，报 `complete`） |
+
+### 输出契约（0.9.1 起）
+
+变更类工具（`scout_start` / `scout_add_source` / `scout_ingest` / `scout_search` / `scout_add_claim` / `scout_verify_identity` / `scout_verify_claim` / `scout_import`，共 8 个）**不再把整份 case JSON 回吐给模型**：
+
+- `value` 是**结构化对象**：`{ ok, caseId, decision, identity, counts: { sources, claims, verified, open }, changed: { kind, ids }, nextActions, persist? }`；
+- `render` 是 **< 1KB 的紧凑摘要**：决策 + 本次增量 + 未核验阻断项 + 下一步；
+- `persist: { persisted, targetDir, error? }` **只出现在变更类工具的 `autoPersist` 路径**（未尝试落盘时该键省略）。**落盘失败不再静默**：`persist.persisted === false` + `persist.error`，且不会产生 `case_exported` 事件。`scout_export` **不带 `persist` 键**，它用**顶层** `persisted` / `complete` / `error` 表达同一件事；
+- **全量数据仍由 `scout_report`（Markdown 报告）与 `scout_export`（文件）提供**——模型看到的是摘要，不是台账全文。
+
+读类工具各有自己的形状：`scout_report` → `{ caseId, decision, report, coverage }`；`scout_questions` → `{ caseId, questions }`；`scout_compare` → `{ caseIds, report }`；`scout_export` → `{ caseId, targetDir, files, persisted, complete, error? }`，其中 `targetDir` 是**解析后的绝对路径**。`scout_import` 复用变更类信封，并额外带 `sourceDir`（恢复来源目录）与 `complete`（导出是否完整）。
+
+### 命令与 Skill（0.9.1 新增）
+
+| 入口 | 作用 |
+|---|---|
+| `/scout` 命令 | `status` / `questions` / `report` / `export` 四个子动作（复用工具逻辑）。宿主会在处理前后自动落 `command/run` + `command/done` 事件——两者都在宿主已知事件词表内，所以会话日志天然可重建 |
+| `scout` Skill | 插件直接注册的尽调工作流（`ctx.skills.register`，不需要落文件、不需要 client bundle）：start → search/ingest → claim → verify_identity → report → questions + 四条证据纪律；卸载即消失 |
+
+命令用法（与实现一致）：
+
+```text
+/scout status <caseId> | /scout questions <caseId> | /scout report <caseId> | /scout export <caseId> [targetDir]
+```
+
+两者都是**可选绑定**：宿主没有 `commands` / `skills` 服务时静默跳过，不影响插件加载与工具使用。
 
 ## 安装到 DSH Profile
 
+两条已验证路径，任选其一：
+
 ```sh
+# 路径 A：Git 安装（抓源码，会执行 prepare）
 dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
-dsh --profile scout-demo --dump-config   # 验证工具挂载
+
+# 路径 B：本地 tarball 安装（离线、可复现；门禁里跑的就是这一条）
+pnpm pack                                        # 生成 dsh-scout-0.9.1.tgz
+dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.1.tgz"
+
+# 验证工具挂载
+dsh --profile scout-demo --dump-config
 ```
 
-要求：Node ≥ 22.19；`@deepseek-ai/dsh-tools` peer 范围为 `>=0.1.0-rc.6 <0.3.0-0`，`@deepseek-ai/cordis` 为 `>=4.0.2 <5`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
+要求：Node ≥ 22.19。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
 
 ### DSH 兼容性
 
-DSH 安装和启动时会检查插件的 `@deepseek-ai/dsh-*` peer；预发布版本也参与匹配。上界 `<0.3.0-0` 排除 `0.3.0-alpha` 及之后的版本。以下是 **2026-10-12 在隔离 profile 中用 0.9.0 候选 tarball 实测**的版本，覆盖安装、冷启动、工具挂载和卸载：
+DSH 对插件的兼容性有**三个层次**，不要混为一谈：
 
-| DSH 版本 | npm 渠道（核对当日） | 结果 |
+| 层次 | 位置 | 谁在执行 | 不匹配会怎样 |
+|---|---|---|---|
+| **声明** | `package.json` 的 `engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`） | 目前**没有任何代码**读取（DSH 0.2.0-rc.2 运行时不读 `engines.dsh`；官方 manifest 的注释写明 *"DSH compatibility is declarative until a reader enforces it"*） | 只表达作者意图，不拦截任何东西 |
+| **生效** | `peerDependencies` 中名字为 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围（本仓库只有 `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"` 一条） | DSH 安装检查 + profile 启动预检 `evaluatePluginCompatibility()` | 安装阶段拒绝，或启动时禁用该插件行 |
+| **不被校验** | `@deepseek-ai/cordis: ">=4.0.2 <5"`（以及 `@deepseek-ai/schemastery`） | DSH 的 peer 名字过滤只认 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | 由 pnpm 解析，DSH 不做兼容判定 |
+
+三个必须知道的细节：
+
+1. **预发布版本参与匹配。** 判定用 `semver.satisfies(runtime, range, { includePrerelease: true })`。上界写成 `<0.3.0-0` 正是为了在开启 prerelease 的前提下排除 `0.3.0-alpha` 及以后；反过来说，这条 range 的写法**依赖这个标志位**——去掉它，`0.2.0-rc.2` 会被判成不匹配。**用其它工具核对这条范围时请带上 `includePrerelease`**：按默认 semver 语义（node-semver 的预发布规则——预发布版本只被「同 major.minor.patch 元组且带预发布」的比较器接受），`0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2` 都会被判为**不满足**（semver 7.8.5 实测：`0.1.0-rc.6` 两种语义均为 true；后三者 plain=false / incl=true；`0.3.0-alpha.1` 两者均为 false）。**以 DSH 的判定为准。**
+2. **失败的形态是「静默不加载」，不是报错。** 安装时能预判的 spec（`add` 一个 registry 包）会在 pnpm 执行前直接拒绝并打印豁免命令；git / tarball spec 在安装后判定，失败会回滚 profile 清单与 lockfile。而**已经在 profile 里、启动时才发现不匹配**的插件行会被置为 disabled，本进程只在 stderr 打一行 `dsh: disabling profile plugin <row>: <reason>`——用户看到的现象是"插件没生效"（工具不在、`/scout` 不在），不是一条显眼的红色报错。
+3. **这一条 `@deepseek-ai/dsh-tools` peer 就是全部门禁。** 改 peer 范围等于改兼容承诺。
+
+#### 逃生门：profile 级精确版本豁免
+
+如果只是**声明范围过期**（例如 DSH 发了 `0.3.0-alpha.1`，而插件其实还能跑），可以不做新版本、直接在 profile 里豁免：
+
+```sh
+dsh plugin --profile <name> version-exemptions   # 查看当前豁免与运行时版本
+dsh plugin --profile <name> allow-version <package>@<version> --dsh-version <exact-dsh-version> --accept-risk
+dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <exact-dsh-version>
+```
+
+豁免记录写在 profile 目录下、与 `package.json` / `cordis.patch.yml` 并列的 `compatibility.json`（精确 `package@version` → 允许的精确 DSH 版本列表）。四条边界：
+
+- **只接受精确版本**，不接受 range；
+- 只授权「这一个包版本 + 这一个 DSH 版本」这一对，**不随插件或 DSH 升级继承**；
+- **不授权**依赖的安装脚本；
+- 生效时机是**下一次组合**：live profile 会重新组合并挂载，startup-only profile 需要重启。
+
+授予豁免需要显式风险确认（CLI 的 `--accept-risk`，插件管理器里是 `acceptRisk: true`），DSH 会在写入前打印风险警告——不兼容的插件可能崩溃或损坏数据。
+
+#### 已实测版本矩阵
+
+**0.9.1 候选 tarball 已在四个精确 DSH 版本上实测通过**（2026-10-12，隔离 profile，四个 binary 均从 npm 真实取用、非本机 DSH）：覆盖安装、冷启动、工具挂载、**真实工具调用门禁**（含 `signal` 字段与 `output.schema` 校验）和卸载。完整门禁由 `npm run check:release` 执行，实测输出：
+
+```text
+dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
+```
+
+| DSH 版本 | npm 渠道（核对当日） | 0.9.1 候选 tarball 结果 |
 | --- | --- | --- |
 | `0.1.0-rc.6` | 兼容范围下界 | 通过 |
 | `0.1.2-rc.1` | 旧版回归 | 通过 |
 | `0.2.0-rc.2` | `latest` / `next` | 通过 |
 | `0.2.1-alpha.2` | `alpha` | 通过 |
 
+本表此前记录的是同日 **0.9.0** 候选 tarball 的结果；0.9.1 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**）并重新跑通，故直接更新为本版本。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
+
 未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
+
+> **夜间变红不等于插件坏了**：它可能只是声明范围过期（例如 DSH 发布 `0.3.0-alpha.1`）。`check:release` 会把「超出声明范围（预期）」与「范围内但失败（回归）」分开报告——前者应当更新声明范围，或按上面的精确版本豁免处理，而不是当成回归去修。
 
 ## 配置（可选）
 
@@ -141,33 +227,45 @@ DSH 安装和启动时会检查插件的 `@deepseek-ai/dsh-*` peer；预发布�
 ```yaml
 - id: dsh-scout
   config:
-    scoutDir: /path/to/scout-cases   # 默认导出目录；case 落在 <scoutDir>/<caseId>/
+    scoutDir: /path/to/scout-cases   # 默认导出目录；case 落在 <scoutDir>/<caseId>/（默认 'dsh-scout'）
     autoPersist: true                # 每次变更后自动写五文件（默认 false）
+    language: en                     # 'zh-CN'（默认）或 'en'
+    authorityHostSuffixes:           # E3 权威源主机后缀白名单（默认覆盖政府/公司登记/交易所域名）
+      - gov.cn
 ```
 
-- `scoutDir` 未配置时，`scout_export` 省略 `targetDir` 会写到 `./dsh-scout/<caseId>/`；
-- `autoPersist: true` 时，每次 `scout_start` / `scout_add_source` / `scout_ingest` / `scout_search` / `scout_add_claim` / `scout_verify_*` 后自动落盘；写失败不影响主流程。
+- 相对 `scoutDir` 以**会话的 cwd** 为基准解析，不再落到 DSH 进程的当前目录；
+- `autoPersist: true` 时，每次变更后自动落盘；**失败可见**：返回值带 `persist.persisted=false` + `persist.error`，且不会写 `case_exported` 事件；
+- `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；默认 `zh-CN`，对既有用户零变化。
 
-## 数据持久化（v0.2 / v0.3）
+## 数据持久化
 
-案例默认在内存中、按会话隔离；`scout_export` 把案例写为五个文件：
+案例默认在内存中、按会话隔离；`scout_export` 把案例写成一个可复制的目录：
 
 ```
-case.json      案例主体（含决策状态）
-sources.json   来源清单
-claims.json    结论台账
-events.jsonl   可回放事件流（case_started / claim_added / …）
-report.md      当前报告快照
+case.json              案例主体（含决策状态）
+sources.json           来源清单
+claims.json            结论台账
+events.jsonl           可回放事件流（case_started / source_added / claim_added /
+                       identity_verified / claim_verified / case_exported /
+                       case_imported / case_rehydrated）
+report.md              当前报告快照
+export.complete.json   0.9.1 起：完成标记（先写 complete:false，五文件落盘后改写 complete:true）
 ```
 
-`scout_import` 可从导出目录恢复案例并重新计算决策——换会话、换机器都能接着尽调。
+- 导出顺序是「**先记 `case_exported` 事件、后写文件**」，所以磁盘上的 `events.jsonl` 包含本次导出；「导出 → 导入 → 再导出」的事件序列稳定；
+- 完成标记 `export.complete.json` 的内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`：**写入前先置 `complete: false`**，五个数据文件全部落盘后再改写为 `complete: true`——所以**陈旧标记不会为半份导出宣称完整**（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」；
+- `scout_import` 能导入**没有完成标记**的旧导出；标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报 `complete: false`，由调用方决定是否信任这份快照（五个数据文件缺任何一个、例如在写 `claims.json` 时中断的全新导出，仍是硬失败）；
+- **会话恢复后不必手动 import**：缓存未命中时，若 `<scoutDir>/<caseId>/` 存在导出，插件会惰性回填并追加 `case_rehydrated` 事件，让"凭空出现"的 case 状态仍然可审计。
 
 ## 何时不要用（设计边界）
 
 - 它内置的 `scout_search` 仅做搜索到来源的登记；**不替代**专用浏览器或 MCP Provider 的深度抓取；
+- 它**不会**自动投递简历、发送求职邮件，或把你的身份信息交给第三方；
 - 它**不会**替你把融资信息、公司自述或招聘启事当成已核实的事实；
 - 它**不构成**法律、投资或医疗建议；
-- 主体核验依赖 E3 官方源，若 gsxt 等无法访问，报告会如实标记"待核验"。
+- 主体核验依赖 E3 官方源，若 gsxt 等无法访问，报告会如实标记"待核验"；
+- **0.9.1 明确不做**：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分 / 排名。理由与边界见 [CHANGELOG](CHANGELOG.md)；其中「自造 session event 会让插件自己写的会话无法重建」是硬约束，见[产品契约 §5.1](docs/dsh-scout-product-contract.md)。
 
 完整 MVP 边界与验收标准见[产品契约](docs/dsh-scout-product-contract.md)；首个示例案例见 [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json)。
 
@@ -175,11 +273,11 @@ report.md      当前报告快照
 
 ```sh
 pnpm install
-pnpm test        # 34 个测试：决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转
-pnpm run check:release
+pnpm test                 # 构建 + 单元测试（决策默认值/证据约束/主体核验/会话隔离/报告渲染/导出导入往返/自动持久化/面试问题/采集→主张流转/多语言/分发包契约）
+pnpm run check:release    # 四个精确 DSH 版本的 profile 门禁 + 打包内容检查
 ```
 
-`check:release` 在运行 34 项测试后，分别用表中的四个精确 DSH 版本安装候选 tarball 并检查 profile 生命周期，最后检查打包内容。
+`test:profile` 会在隔离 profile 里**真的发一次工具调用**（`scout_start` → `scout_report`），断言 `isError === false`、`value` 是对象、`render` 内容 < 1KB，并保留 `--dump-config` 层、必需工具挂载与卸载 disposer 的断言；脚本注释里写明它到底覆盖了什么、没覆盖什么。`check:release` 随后用四个精确 DSH 版本复跑 profile 门禁（并把「超出声明范围（预期）」与「范围内失败（回归）」分开报），最后检查打包内容。
 
 ## 路线图
 
@@ -190,7 +288,13 @@ pnpm run check:release
 - ✅ v0.5：公司/岗位对比（`scout_compare`：多案例并排对比报告，合并面试问题）
 - ✅ v0.6：采集→主张流转（`scout_ingest` 支持 claim 草稿：登记来源的同时自动添加主张）
 - ✅ v0.7：Provider 深度集成（`scout_search`：DSH Web Provider 搜索，结果自动登记为来源）
+- ✅ v0.8：首个 npm 发布（0.8.0）；0.8.1 声明 Schemastery `Config`、补 `exports` 映射、修可选服务注入；0.8.2 对齐 DSH 0.2 rc 通道
+- ✅ v0.9.0：适配 DSH 0.2 运行时；四个精确版本的兼容矩阵 + 夜间兼容检查 + 兼容 issue 模板
+- ✅ v0.9.1：输出契约（结构化值 + 紧凑摘要）、落盘可信度、服务调用时绑定与惰性回填、`language` 与 `## Coverage`、`/scout` 与 `scout` Skill、分发契约（`engines.dsh` / `manifestVersion` / locale / icon）
+- ⏭ v0.10.0（计划）：client 面板、`ctx.storageDomain` 持久化重写、`presentationMeta` 载荷、对比矩阵升级与可扩展证据策略（**评分仍不做**）
 
 ## 社区
 
 面向 DeepSeek Harness 的独立社区插件（Topic：`dsh-plugin`、`deepseek-harness`、`due-diligence`、`company-research`、`job-research`、`hr-tech`、`evidence-based`）。安装或启动遇到问题时，请用[兼容性问题模板](https://github.com/MaxHou-infinity/dsh-scout/issues/new?template=compatibility.yml)提供精确版本和脱敏日志；也欢迎其他 Issues / PR。
+
+版本变更记录见 [CHANGELOG](CHANGELOG.md)。
