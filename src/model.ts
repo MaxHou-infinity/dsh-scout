@@ -1,3 +1,19 @@
+import {
+  formatScoutString,
+  normalizeScoutLanguage,
+  scoutStrings,
+} from './i18n.js'
+import type { ScoutLanguage } from './i18n.js'
+
+export {
+  formatScoutString,
+  isScoutLanguage,
+  normalizeScoutLanguage,
+  SCOUT_LANGUAGES,
+  scoutStrings,
+} from './i18n.js'
+export type { ScoutLanguage, ScoutStrings } from './i18n.js'
+
 export const EVIDENCE_LEVELS = ['E0', 'E1', 'E2', 'E3'] as const
 export type EvidenceLevel = typeof EVIDENCE_LEVELS[number]
 
@@ -45,6 +61,18 @@ export type ClaimDimension = typeof CLAIM_DIMENSIONS[number]
 
 export type Decision = 'PROCEED' | 'VERIFY' | 'STOP'
 
+export const DECISION_REASON_CODES = [
+  'identity',
+  'unresolved',
+  'missing_dimension',
+  'proceed',
+] as const
+export type DecisionReasonCode = typeof DECISION_REASON_CODES[number]
+
+export function isDecisionReasonCode(value: unknown): value is DecisionReasonCode {
+  return typeof value === 'string' && (DECISION_REASON_CODES as readonly string[]).includes(value)
+}
+
 export const EVENT_TYPES = [
   'case_started',
   'source_added',
@@ -53,6 +81,7 @@ export const EVENT_TYPES = [
   'claim_verified',
   'case_exported',
   'case_imported',
+  'case_rehydrated',
 ] as const
 export type ScoutEventType = typeof EVENT_TYPES[number]
 
@@ -159,10 +188,20 @@ export interface ScoutCase {
   }
   decision: Decision
   decisionReason: string
+  /** Optional reason code for the decision; older exports omit it. */
+  decisionReasonCode?: DecisionReasonCode
   sources: ScoutSource[]
   claims: ScoutClaim[]
   interviewQuestions: string[]
   events?: ScoutEvent[]
+}
+
+/**
+ * Resolve the render language: an explicit option wins, then the case language,
+ * then the `zh-CN` default. Unknown values always fall back to `zh-CN`.
+ */
+function reportLanguage(explicit: ScoutLanguage | undefined, fallback: unknown): ScoutLanguage {
+  return normalizeScoutLanguage(explicit ?? fallback)
 }
 
 export function createCase(input: {
@@ -171,13 +210,16 @@ export function createCase(input: {
   roleTitle: string
   location?: string
   decisionObjective?: string
+  language?: ScoutLanguage
 }): ScoutCase {
+  const language = normalizeScoutLanguage(input.language)
+  const t = scoutStrings(language)
   return {
     schemaVersion: 'dsh-scout.case.v0',
     caseId: input.caseId,
     title: `${input.companyName} — ${input.roleTitle}`,
-    language: 'zh-CN',
-    decisionObjective: input.decisionObjective ?? '判断是否值得进入下一轮，并准备面试反问',
+    language,
+    decisionObjective: input.decisionObjective ?? t.defaults.decisionObjective,
     subject: {
       name: input.companyName,
       identitySourceIds: [],
@@ -186,20 +228,14 @@ export function createCase(input: {
     role: {
       title: input.roleTitle,
       location: input.location,
-      fitQuestion: '该岗位是否拥有足够的业务授权，值得继续推进？',
+      fitQuestion: t.defaults.fitQuestion,
     },
     decision: 'VERIFY',
-    decisionReason: '尚未完成公司主体和岗位授权核验。',
+    decisionReason: t.defaults.initialDecisionReason,
     sources: [],
     claims: [],
     events: [],
-    interviewQuestions: [
-      '这个岗位在前三个月最重要的业务结果是什么？',
-      '该岗位直接向谁汇报，在哪些事项上拥有最终决定权？',
-      '现有团队、预算和外部供应商资源分别是什么？',
-      '当前最影响业务增长的组织问题是什么？',
-      '六个月后，哪些可观察结果代表这个岗位取得成功？',
-    ],
+    interviewQuestions: [...t.defaults.interviewQuestions],
   }
 }
 
@@ -279,6 +315,34 @@ export function inferEvidenceLevel(
     return { evidenceLevel: 'E1', inferred: true }
   }
   return { evidenceLevel: 'E2', inferred: true }
+}
+
+/**
+ * Normalize a source URL for deduplication: trim, lowercase the host, drop a
+ * trailing slash and any fragment. Empty or unparsable URLs return `undefined`.
+ */
+export function normalizeSourceUrl(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return undefined
+  }
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '')
+  if (!hostname) return undefined
+  const path = parsed.pathname.replace(/\/+$/, '')
+  const port = parsed.port ? `:${parsed.port}` : ''
+  return `${parsed.protocol.toLowerCase()}//${hostname}${port}${path}${parsed.search}`
+}
+
+/** Find a source by normalized URL (trim + trailing-slash + host case insensitive). */
+export function findSourceByUrl(scoutCase: ScoutCase, url: string): ScoutSource | undefined {
+  const target = normalizeSourceUrl(url)
+  if (!target) return undefined
+  return scoutCase.sources.find(source => normalizeSourceUrl(source.url) === target)
 }
 
 export function addClaim(scoutCase: ScoutCase, claim: ScoutClaim): ScoutCase {
@@ -405,42 +469,78 @@ export function verifyIdentity(
   }
 }
 
-export function decideCase(scoutCase: ScoutCase): ScoutCase {
-  const identityUnverified = scoutCase.subject.identityStatus !== 'verified'
+const REQUIRED_DIMENSIONS: readonly ClaimDimension[] = ['role_existence', 'reporting_line', 'mandate']
+
+interface DecisionAssessment {
+  decision: Decision
+  reasonCode: DecisionReasonCode
+  blockingContradiction: boolean
+  missingRequiredDimension?: ClaimDimension
+}
+
+/** Recompute the whole decision basis from the subject and claims (pure). */
+function assessDecision(scoutCase: ScoutCase): DecisionAssessment {
   const blockingContradiction = scoutCase.claims.some(claim =>
     claim.impact === 'blocking' && claim.status === 'contradicted',
   )
+  const identityUnverified = scoutCase.subject.identityStatus !== 'verified'
   const unresolvedMaterialClaim = scoutCase.claims.some(claim =>
     claim.impact !== 'informational' && claim.status !== 'verified',
   )
-  const requiredDimensions: ClaimDimension[] = ['role_existence', 'reporting_line', 'mandate']
-  const missingRequiredDimension = requiredDimensions.find(dimension =>
+  const missingRequiredDimension = REQUIRED_DIMENSIONS.find(dimension =>
     !scoutCase.claims.some(claim => claim.dimension === dimension && claim.status === 'verified'),
   )
+  let reasonCode: DecisionReasonCode
+  if (blockingContradiction) reasonCode = 'unresolved'
+  else if (identityUnverified) reasonCode = 'identity'
+  else if (unresolvedMaterialClaim) reasonCode = 'unresolved'
+  else if (missingRequiredDimension) reasonCode = 'missing_dimension'
+  else reasonCode = 'proceed'
+  const decision: Decision = blockingContradiction
+    ? 'STOP'
+    : reasonCode === 'proceed'
+      ? 'PROCEED'
+      : 'VERIFY'
+  return { decision, reasonCode, blockingContradiction, missingRequiredDimension }
+}
 
-  if (blockingContradiction) {
+/** Pure decision reason code recomputed from the subject and claims, without stored state. */
+export function explainDecision(scoutCase: ScoutCase): DecisionReasonCode {
+  return assessDecision(scoutCase).reasonCode
+}
+
+export function decideCase(scoutCase: ScoutCase, opts?: { language?: ScoutLanguage }): ScoutCase {
+  const t = scoutStrings(reportLanguage(opts?.language, scoutCase.language))
+  const { decision, reasonCode, blockingContradiction, missingRequiredDimension } = assessDecision(scoutCase)
+  const decisionReason = reasonCode === 'proceed'
+    ? t.decisionReasons.proceed
+    : reasonCode === 'identity'
+      ? t.decisionReasons.identity
+      : reasonCode === 'unresolved'
+        ? (blockingContradiction ? t.decisionReasons.blockingContradiction : t.decisionReasons.unresolved)
+        : formatScoutString(t.decisionReasons.missingDimension, { dimension: missingRequiredDimension ?? '' })
+  return { ...scoutCase, decision, decisionReason, decisionReasonCode: reasonCode }
+}
+
+export interface DimensionCoverage {
+  dimension: ClaimDimension
+  verified: number
+  open: number
+  untouched: boolean
+}
+
+/** Investigation coverage per dimension, in `CLAIM_DIMENSIONS` order. */
+export function computeCoverage(scoutCase: ScoutCase): DimensionCoverage[] {
+  return CLAIM_DIMENSIONS.map(dimension => {
+    const claims = scoutCase.claims.filter(claim => claim.dimension === dimension)
+    const verified = claims.filter(claim => claim.status === 'verified').length
     return {
-      ...scoutCase,
-      decision: 'STOP',
-      decisionReason: '存在相互矛盾的关键事实，需先解决冲突。',
+      dimension,
+      verified,
+      open: claims.length - verified,
+      untouched: claims.length === 0,
     }
-  }
-  if (identityUnverified || unresolvedMaterialClaim || missingRequiredDimension) {
-    return {
-      ...scoutCase,
-      decision: 'VERIFY',
-      decisionReason: identityUnverified
-        ? '公司主体仍未核验，不能直接推进。'
-        : unresolvedMaterialClaim
-          ? '仍有阻断级或重要结论未完成核验，不能直接推进。'
-          : `缺少已核验的必需维度：${missingRequiredDimension}。`,
-    }
-  }
-  return {
-    ...scoutCase,
-    decision: 'PROCEED',
-    decisionReason: '当前关键结论均有来源支撑，建议进入下一轮并继续现场核验。',
-  }
+  })
 }
 
 const IMPACT_RANK: Record<ClaimImpact, number> = { blocking: 0, material: 1, informational: 2 }
@@ -449,52 +549,83 @@ function byImpact(claims: ScoutClaim[]): ScoutClaim[] {
   return [...claims].sort((a, b) => IMPACT_RANK[a.impact] - IMPACT_RANK[b.impact])
 }
 
-const MISSING_DIMENSION_QUESTIONS: Record<string, string> = {
-  role_existence: '该岗位当前是否真实在招？招聘状态与到岗时间如何？',
-  reporting_line: '该岗位直接向谁汇报？虚线/实线如何划分？',
-  mandate: '该岗位在哪些事项上拥有最终决定权？团队与预算规模如何？',
+const INTERVIEW_QUESTION_LIMIT = 12
+
+/** Trim-key dedupe that keeps the first occurrence and drops blank questions. */
+function dedupeQuestions(questions: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const question of questions) {
+    const key = question.trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    unique.push(question)
+  }
+  return unique
 }
 
-/** Derive a deduplicated, prioritized interview question list from the case. */
-export function generateInterviewQuestions(scoutCase: ScoutCase): string[] {
+/**
+ * Derive a deduplicated, prioritized interview question list from the case.
+ * Order: pending next actions, missing required dimensions, untouched
+ * dimensions, then the case's own curated questions. The curated questions
+ * reserve their full quota, so an uninvestigated case cannot crowd them out of
+ * the 12-item cap.
+ */
+export function generateInterviewQuestions(
+  scoutCase: ScoutCase,
+  opts?: { language?: ScoutLanguage },
+): string[] {
+  const t = scoutStrings(reportLanguage(opts?.language, scoutCase.language))
   const nextActions = byImpact(scoutCase.claims.filter(claim =>
     claim.impact !== 'informational' && claim.status !== 'verified',
   ))
     .map(claim => claim.nextAction.trim())
     .filter((action, index, all) => action && all.indexOf(action) === index)
-  const missingDimensions = Object.keys(MISSING_DIMENSION_QUESTIONS).filter(dimension =>
+  const missingDimensions = REQUIRED_DIMENSIONS.filter(dimension =>
     !scoutCase.claims.some(claim => claim.dimension === dimension && claim.status === 'verified'),
   )
-  const questions = [
+  const untouchedDimensions = computeCoverage(scoutCase)
+    .filter(item => item.untouched)
+    .map(item => item.dimension)
+  const head = dedupeQuestions([
     ...nextActions,
-    ...missingDimensions.map(dimension => MISSING_DIMENSION_QUESTIONS[dimension]),
-    ...scoutCase.interviewQuestions,
-  ]
-  const seen = new Set<string>()
-  return questions.filter(question => {
-    const key = question.trim()
-    if (!key || seen.has(key)) return false
-    seen.add(key)
-    return true
-  }).slice(0, 12)
+    ...missingDimensions.map(dimension => t.questions[dimension]),
+    ...untouchedDimensions.map(dimension => t.questions[dimension]),
+  ])
+  const curated = scoutCase.interviewQuestions
+  const headBudget = Math.max(0, INTERVIEW_QUESTION_LIMIT - curated.length)
+  return dedupeQuestions([...head.slice(0, headBudget), ...curated]).slice(0, INTERVIEW_QUESTION_LIMIT)
 }
 
-export function renderReport(scoutCase: ScoutCase): string {
+export function renderReport(scoutCase: ScoutCase, opts?: { language?: ScoutLanguage }): string {
+  const t = scoutStrings(reportLanguage(opts?.language, scoutCase.language))
   const sourceLine = (source: ScoutSource) => {
     const url = source.url ? ` — ${source.url}` : ''
     return `- ${source.sourceId}: ${source.title} [${source.type} / ${source.evidenceLevel}]${url}`
   }
   const sources = scoutCase.sources.length
     ? scoutCase.sources.map(sourceLine).join('\n')
-    : '- 暂无来源'
+    : t.empty.noSources
   const claimLine = (claim: ScoutClaim) => {
-    const sourceIds = claim.sourceIds.length ? claim.sourceIds.join(', ') : '无来源'
-    const history = claim.history?.length ? `；历史修订：${claim.history.length}` : ''
-    return `- **${claim.status} / ${claim.evidenceLevel} / ${claim.impact}** ${claim.text}（维度：${claim.dimension}；来源：${sourceIds}；置信说明：${claim.confidenceNote}；下一步：${claim.nextAction}${history}）`
+    const sourceIds = claim.sourceIds.length ? claim.sourceIds.join(', ') : t.claim.noSourceIds
+    const history = claim.history?.length
+      ? formatScoutString(t.claim.history, { count: claim.history.length })
+      : ''
+    return formatScoutString(t.claim.line, {
+      status: claim.status,
+      evidenceLevel: claim.evidenceLevel,
+      impact: claim.impact,
+      text: claim.text,
+      dimension: claim.dimension,
+      sourceIds,
+      confidenceNote: claim.confidenceNote,
+      nextAction: claim.nextAction,
+      history,
+    })
   }
   const claims = scoutCase.claims.length
     ? scoutCase.claims.map(claimLine).join('\n')
-    : '- 暂无结论'
+    : t.empty.noClaims
   const supports = byImpact(scoutCase.claims.filter(claim => claim.status === 'verified')).slice(0, 3)
   const risks = byImpact(scoutCase.claims.filter(claim =>
     claim.impact !== 'informational' && claim.status !== 'verified',
@@ -505,11 +636,15 @@ export function renderReport(scoutCase: ScoutCase): string {
   const checklist = byImpact(scoutCase.claims.filter(claim =>
     claim.impact !== 'informational' && claim.status !== 'verified',
   ))
-  const checklistLine = (claim: ScoutClaim) =>
-    `- [${claim.impact}] ${claim.claimId}: ${claim.text} → 下一步：${claim.nextAction}`
+  const checklistLine = (claim: ScoutClaim) => formatScoutString(t.claim.checklistLine, {
+    impact: claim.impact,
+    claimId: claim.claimId,
+    text: claim.text,
+    nextAction: claim.nextAction,
+  })
   const checklistBlock = checklist.length
     ? checklist.map(checklistLine).join('\n')
-    : '- 无待核验的阻断级或重要事项'
+    : t.empty.noChecklistItems
   const statusCounts = scoutCase.claims.reduce<Record<string, number>>((counts, claim) => {
     counts[claim.status] = (counts[claim.status] ?? 0) + 1
     return counts
@@ -517,44 +652,65 @@ export function renderReport(scoutCase: ScoutCase): string {
   const summary = Object.entries(statusCounts)
     .map(([status, count]) => `${count} ${status}`)
     .join(' / ')
+  const coverage = computeCoverage(scoutCase)
+  const coverageLines = coverage.map(item => formatScoutString(t.coverage.entry, {
+    dimension: item.dimension,
+    label: t.dimensions[item.dimension],
+    verified: item.verified,
+    open: item.open,
+    untouched: item.untouched ? t.coverage.yes : t.coverage.no,
+  }))
+  const untouchedDimensions = coverage.filter(item => item.untouched).map(item => item.dimension)
+  const untouchedLine = formatScoutString(t.coverage.untouchedLine, {
+    count: untouchedDimensions.length,
+    dimensions: untouchedDimensions.length
+      ? untouchedDimensions.join(t.coverage.separator)
+      : t.coverage.none,
+  })
 
   return [
     `# ${scoutCase.title}`,
     '',
-    `- 判断：**${scoutCase.decision}**`,
-    `- 理由：${scoutCase.decisionReason}`,
-    `- 目标：${scoutCase.decisionObjective}`,
-    ...(summary ? [`- 证据概况：${summary}`] : []),
+    formatScoutString(t.header.decision, { decision: scoutCase.decision }),
+    formatScoutString(t.header.reason, { reason: scoutCase.decisionReason }),
+    formatScoutString(t.header.objective, { objective: scoutCase.decisionObjective }),
+    ...(summary ? [formatScoutString(t.header.evidenceSummary, { summary })] : []),
     '',
-    '## Key supporting evidence (up to 3)',
+    t.headings.coverage,
     '',
-    supports.length ? supports.map(claimLine).join('\n') : '- 暂无已核验的支持证据',
+    ...coverageLines,
     '',
-    '## Blocking or unresolved risks (up to 3)',
+    untouchedLine,
     '',
-    risks.length ? risks.map(claimLine).join('\n') : '- 暂无阻断级或重要待核验风险',
+    t.headings.supportingEvidence,
     '',
-    '## Role task and authority hypotheses',
+    supports.length ? supports.map(claimLine).join('\n') : t.empty.noSupportingEvidence,
     '',
-    roleHypotheses.length ? roleHypotheses.map(claimLine).join('\n') : '- 岗位真实性、汇报关系和授权边界尚未建模',
+    t.headings.unresolvedRisks,
     '',
-    '## Verification checklist',
+    risks.length ? risks.map(claimLine).join('\n') : t.empty.noUnresolvedRisks,
+    '',
+    t.headings.roleHypotheses,
+    '',
+    roleHypotheses.length ? roleHypotheses.map(claimLine).join('\n') : t.empty.noRoleHypotheses,
+    '',
+    t.headings.verificationChecklist,
     '',
     checklistBlock,
     '',
-    '## Claim ledger',
+    t.headings.claimLedger,
     '',
     claims,
     '',
-    '## Sources',
+    t.headings.sources,
     '',
     sources,
     '',
-    '## Interview questions',
+    t.headings.interviewQuestions,
     '',
     scoutCase.interviewQuestions.map(question => `- ${question}`).join('\n'),
     '',
-    '> 本报告只表达当前证据边界内的判断，不替代法律、投资或医疗意见。',
+    t.reportDisclaimer,
     '',
   ].join('\n')
 }
@@ -575,8 +731,19 @@ export const EXPORT_FILE_NAMES = [
   'report.md',
 ] as const
 
-/** Serialize a case into the durable five-file export payloads (no I/O). */
-export function exportCaseFiles(scoutCase: ScoutCase): Record<string, string> {
+/**
+ * Serialize a case into the durable five-file export payloads (no I/O).
+ *
+ * `case.json` keeps the case's own `language` field, which records the language
+ * the case was created in; the language used to render `report.md` is decided by
+ * the caller through `opts.language` (falling back to the case language), so a
+ * case imported across a language boundary can still be exported in the
+ * configured language.
+ */
+export function exportCaseFiles(
+  scoutCase: ScoutCase,
+  opts?: { language?: ScoutLanguage },
+): Record<string, string> {
   const base = {
     schemaVersion: scoutCase.schemaVersion,
     caseId: scoutCase.caseId,
@@ -587,6 +754,7 @@ export function exportCaseFiles(scoutCase: ScoutCase): Record<string, string> {
     role: scoutCase.role,
     decision: scoutCase.decision,
     decisionReason: scoutCase.decisionReason,
+    ...(scoutCase.decisionReasonCode ? { decisionReasonCode: scoutCase.decisionReasonCode } : {}),
     interviewQuestions: scoutCase.interviewQuestions,
   }
   const events = scoutCase.events ?? []
@@ -595,7 +763,7 @@ export function exportCaseFiles(scoutCase: ScoutCase): Record<string, string> {
     'sources.json': `${JSON.stringify(scoutCase.sources, null, 2)}\n`,
     'claims.json': `${JSON.stringify(scoutCase.claims, null, 2)}\n`,
     'events.jsonl': events.length ? `${events.map(event => JSON.stringify(event)).join('\n')}\n` : '',
-    'report.md': renderReport(scoutCase),
+    'report.md': renderReport(scoutCase, opts),
   }
 }
 
@@ -632,16 +800,20 @@ export function importCaseFromFiles(files: Record<string, string>): ScoutCase {
     ? files['events.jsonl'].trim().split('\n').map(line => JSON.parse(line))
     : []
   if (!Array.isArray(events)) throw new Error('Invalid events.jsonl export')
+  const decisionReasonCode = isDecisionReasonCode(base.decisionReasonCode)
+    ? base.decisionReasonCode
+    : undefined
   return {
     schemaVersion: base.schemaVersion as 'dsh-scout.case.v0',
     caseId: base.caseId as string,
     title: base.title as string,
-    language: base.language as string,
+    language: typeof base.language === 'string' && base.language ? base.language : 'zh-CN',
     decisionObjective: base.decisionObjective as string,
     subject: base.subject as ScoutCase['subject'],
     role: base.role as ScoutCase['role'],
     decision: base.decision as Decision,
     decisionReason: base.decisionReason as string,
+    ...(decisionReasonCode ? { decisionReasonCode } : {}),
     sources: sources as ScoutSource[],
     claims: claims as ScoutClaim[],
     interviewQuestions: base.interviewQuestions as string[],
@@ -649,38 +821,46 @@ export function importCaseFromFiles(files: Record<string, string>): ScoutCase {
   }
 }
 
-const CLAIM_STATUS_LABELS: Record<string, string> = {
-  verified: '已核验',
-  reported: '转述',
-  inferred: '推断',
-  contradicted: '矛盾',
-  unknown: '未知',
-  needs_verification: '待核验',
-}
-
 /** Render a side-by-side comparison report for two or more cases. */
-export function renderComparison(cases: ScoutCase[]): string {
+export function renderComparison(cases: ScoutCase[], opts?: { language?: ScoutLanguage }): string {
   if (cases.length < 2) throw new Error('Comparison requires at least two cases')
   if (cases.length > 5) throw new Error('Comparison supports at most five cases')
+  const language = reportLanguage(opts?.language, cases[0].language)
+  const t = scoutStrings(language)
   const countByStatus = (scoutCase: ScoutCase) => scoutCase.claims.reduce<Record<string, number>>((counts, claim) => {
     counts[claim.status] = (counts[claim.status] ?? 0) + 1
     return counts
   }, {})
   const summaryLine = (scoutCase: ScoutCase) => {
     const counts = countByStatus(scoutCase)
-    const identity = scoutCase.subject.identityStatus === 'verified' ? '已核验' : '待核验'
+    const identity = scoutCase.subject.identityStatus === 'verified'
+      ? t.comparison.identityVerified
+      : t.comparison.identityUnverified
     const countsText = Object.entries(counts)
-      .map(([status, count]) => `${count} ${CLAIM_STATUS_LABELS[status] ?? status}`)
+      .map(([status, count]) => `${count} ${(t.statuses as Record<string, string>)[status] ?? status}`)
       .join(' / ')
-    const countsSuffix = countsText ? `（${countsText}）` : ''
-    return `- **${scoutCase.title}**：决策 **${scoutCase.decision}**；主体${identity}；主张 ${scoutCase.claims.length} 条${countsSuffix}`
+    const countsSuffix = countsText
+      ? formatScoutString(t.comparison.countsSuffix, { counts: countsText })
+      : ''
+    return formatScoutString(t.comparison.summary, {
+      title: scoutCase.title,
+      decision: scoutCase.decision,
+      identity,
+      claimCount: scoutCase.claims.length,
+      countsSuffix,
+    })
   }
   const compareTable = [
-    '| 案例 | 决策 | 主体核验 | 主张数 |',
-    '|---|---|---|---|',
-    ...cases.map(scoutCase =>
-      `| ${scoutCase.title} | ${scoutCase.decision} | ${scoutCase.subject.identityStatus === 'verified' ? '✅ 已核验' : '⚠️ 待核验'} | ${scoutCase.claims.length} |`,
-    ),
+    t.comparison.tableHeader,
+    t.comparison.tableSeparator,
+    ...cases.map(scoutCase => formatScoutString(t.comparison.tableRow, {
+      title: scoutCase.title,
+      decision: scoutCase.decision,
+      identity: scoutCase.subject.identityStatus === 'verified'
+        ? t.comparison.verifiedMark
+        : t.comparison.unverifiedMark,
+      claimCount: scoutCase.claims.length,
+    })),
   ]
   const sections: string[] = []
   for (const scoutCase of cases) {
@@ -689,20 +869,26 @@ export function renderComparison(cases: ScoutCase[]): string {
       claim.impact !== 'informational' && claim.status !== 'verified',
     )).slice(0, 3)
     sections.push(
-      `### ${scoutCase.title}（${scoutCase.caseId}）`,
+      formatScoutString(t.comparison.detailTitle, { title: scoutCase.title, caseId: scoutCase.caseId }),
       '',
-      '**关键已核验结论**：',
-      verified.length ? verified.map(claim => `- ${claim.text}`).join('\n') : '- 暂无已核验结论',
+      t.comparison.verifiedHeading,
+      verified.length ? verified.map(claim => `- ${claim.text}`).join('\n') : t.comparison.noVerified,
       '',
-      '**待核验风险/未知项**：',
-      open.length ? open.map(claim => `- [${claim.impact}] ${claim.text} → ${claim.nextAction}`).join('\n') : '- 无',
+      t.comparison.openHeading,
+      open.length
+        ? open.map(claim => formatScoutString(t.comparison.openItem, {
+          impact: claim.impact,
+          text: claim.text,
+          nextAction: claim.nextAction,
+        })).join('\n')
+        : t.comparison.noOpen,
       '',
     )
   }
   const mergedQuestions: string[] = []
   const seen = new Set<string>()
   for (const scoutCase of cases) {
-    for (const question of generateInterviewQuestions(scoutCase)) {
+    for (const question of generateInterviewQuestions(scoutCase, { language })) {
       const key = question.trim()
       if (!key || seen.has(key)) continue
       seen.add(key)
@@ -712,24 +898,24 @@ export function renderComparison(cases: ScoutCase[]): string {
     if (mergedQuestions.length >= 12) break
   }
   return [
-    `# 公司/岗位对比（${cases.length} 个案例）`,
+    formatScoutString(t.comparison.title, { count: cases.length }),
     '',
-    '## 总览',
+    t.comparison.overviewHeading,
     '',
     ...cases.map(summaryLine),
     '',
-    '## 决策与主体核验对比',
+    t.comparison.decisionTableHeading,
     '',
     ...compareTable,
     '',
-    '## 各案例详情',
+    t.comparison.detailHeading,
     '',
     ...sections,
-    '## 面试问题（合并去重，前 12 条）',
+    t.comparison.questionsHeading,
     '',
     ...mergedQuestions.map(question => `- ${question}`),
     '',
-    '> 对比只呈现各案例证据边界内的状态，不替代法律、投资或医疗意见；关键差异请以原始来源人工复核。',
+    t.comparison.disclaimer,
     '',
   ].join('\n')
 }

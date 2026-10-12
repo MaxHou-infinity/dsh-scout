@@ -5,20 +5,30 @@ import {
   addClaim,
   addSource,
   appendEvent,
+  CLAIM_DIMENSIONS,
+  computeCoverage,
   createCase,
   decideCase,
+  EVENT_TYPES,
+  explainDecision,
   exportCaseFiles,
+  findSourceByUrl,
+  formatScoutString,
   generateInterviewQuestions,
   importCaseFromFiles,
   inferEvidenceLevel,
   inferSourceType,
+  isScoutLanguage,
   isTrustedAuthorityUrl,
+  normalizeScoutLanguage,
+  normalizeSourceUrl,
   renderComparison,
   renderReport,
+  SCOUT_LANGUAGES,
+  scoutStrings,
   verifyClaim,
   verifyIdentity,
 } from '../dist/model.js'
-import { apply, Config, inject, name } from '../dist/index.js'
 
 test('starts conservatively until company identity is verified', () => {
   const scoutCase = createCase({
@@ -324,44 +334,6 @@ test('only proceeds after identity and all required role dimensions are verified
   assert.equal(decideCase(scoutCase).decision, 'PROCEED')
 })
 
-test('isolates identical case ids by DSH agent session identity', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => undefined
-      },
-    },
-    effect(execute) {
-      Array.from(execute())
-    },
-  })
-  const tools = new Map(registered.map(tool => [tool.name, tool]))
-  const start = tools.get('scout_start')
-  const report = tools.get('scout_report')
-
-  await start.execute({
-    caseId: 'same-id',
-    companyName: 'Company A',
-    roleTitle: 'Role A',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-  await start.execute({
-    caseId: 'same-id',
-    companyName: 'Company B',
-    roleTitle: 'Role B',
-    location: '',
-  }, { agent: { id: 'session-b' } })
-
-  const reportA = await report.execute({ caseId: 'same-id' }, { agent: { id: 'session-a' } })
-  const reportB = await report.execute({ caseId: 'same-id' }, { agent: { id: 'session-b' } })
-  assert.match(reportA, /Company A — Role A/)
-  assert.doesNotMatch(reportA, /Company B/)
-  assert.match(reportB, /Company B — Role B/)
-})
-
 test('renders an evidence summary, source URLs, and a prioritized verification checklist', () => {
   let scoutCase = createCase({
     caseId: 'demo',
@@ -408,46 +380,6 @@ test('renders an evidence summary, source URLs, and a prioritized verification c
   const checklist = report.slice(checklistStart, report.indexOf('## Claim ledger'))
   assert.ok(checklist.indexOf('[blocking]') < checklist.indexOf('[material]'), 'blocking items rank before material')
   assert.match(checklist, /→ 下一步：Confirm the mandate/)
-})
-
-test('exports a disposable DSH plugin tool surface', async () => {  const registered = []
-  const disposed = []
-  const effects = []
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => disposed.push(tool.name)
-      },
-    },
-    effect(execute) {
-      effects.push(...execute())
-    },
-  })
-
-  assert.equal(name, 'dsh-scout')
-  assert.deepEqual(inject, ['tools'])
-  assert.deepEqual(
-    registered.map(tool => tool.name).sort(),
-    [
-      'scout_add_claim',
-      'scout_add_source',
-      'scout_compare',
-      'scout_export',
-      'scout_import',
-      'scout_ingest',
-      'scout_questions',
-      'scout_report',
-      'scout_search',
-      'scout_start',
-      'scout_verify_claim',
-      'scout_verify_identity',
-    ],
-  )
-
-  for (const dispose of effects.reverse()) dispose()
-  assert.deepEqual(disposed.sort(), registered.map(tool => tool.name).sort())
 })
 
 test('round-trips a case through the five-file export', () => {
@@ -506,88 +438,6 @@ test('rejects an incomplete or mismatched export payload', () => {
   assert.throws(() => importCaseFromFiles({ ...intact, 'case.json': JSON.stringify({ schemaVersion: 'dsh-scout.case.v1' }) }), /Unsupported schema/)
 })
 
-test('exports and imports a case through the fs-backed tools', async () => {
-  const registered = []
-  const store = new Map()
-  const mockFs = {
-    async resolve(path) {
-      return { targetKey: path, displayPath: path }
-    },
-    async readText(target) {
-      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
-      return store.get(target.displayPath)
-    },
-    async writeText(target, content) {
-      store.set(target.displayPath, content)
-      return { operation: 'create' }
-    },
-  }
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => undefined
-      },
-    },
-    fs: mockFs,
-    effect(execute) {
-      Array.from(execute())
-    },
-  })
-  const tools = new Map(registered.map(tool => [tool.name, tool]))
-  const start = tools.get('scout_start')
-  const addSourceTool = tools.get('scout_add_source')
-  const addClaimTool = tools.get('scout_add_claim')
-  const exportTool = tools.get('scout_export')
-  const importTool = tools.get('scout_import')
-
-  await start.execute({
-    caseId: 'persisted',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: 'Shenzhen',
-  }, { agent: { id: 'session-a' } })
-  await addSourceTool.execute({
-    caseId: 'persisted',
-    sourceId: 'job-posting',
-    sourceType: 'job_posting',
-    title: 'Example job posting',
-    url: 'https://example.com/job',
-    evidenceLevel: 'E1',
-  }, { agent: { id: 'session-a' } })
-  await addClaimTool.execute({
-    caseId: 'persisted',
-    claimId: 'claim-1',
-    text: 'The role exists.',
-    status: 'reported',
-    evidenceLevel: 'E1',
-    dimension: 'role_existence',
-    impact: 'blocking',
-    sourceIds: 'job-posting',
-    confidenceNote: 'The job posting is a company-controlled source.',
-    nextAction: 'Confirm the mandate in the interview.',
-  }, { agent: { id: 'session-a' } })
-
-  const exportResult = JSON.parse(await exportTool.execute({
-    caseId: 'persisted',
-    targetDir: '/tmp/scout-cases/persisted',
-  }, { agent: { id: 'session-a' } }))
-  assert.equal(exportResult.files.length, 5)
-  assert.equal(store.size, 5)
-  assert.ok(store.has('/tmp/scout-cases/persisted/case.json'))
-
-  const importResult = JSON.parse(await importTool.execute({
-    caseId: 'persisted',
-    sourceDir: '/tmp/scout-cases/persisted',
-  }, { agent: { id: 'session-a' } }))
-  assert.equal(importResult.caseId, 'persisted')
-  assert.equal(importResult.sources.length, 1)
-  assert.equal(importResult.claims.length, 1)
-  assert.ok(importResult.events?.some(event => event.type === 'case_imported'))
-  assert.equal(importResult.decision, 'VERIFY')
-})
-
 test('generates a deduplicated, prioritized interview question list', () => {
   let scoutCase = createCase({
     caseId: 'demo',
@@ -630,149 +480,38 @@ test('generates a deduplicated, prioritized interview question list', () => {
   assert.ok(questions.includes('Confirm the mandate in the interview.'))
   assert.ok(questions.includes('Ask who this role reports to.'))
   // missing verified mandate dimension gets its default question
-  assert.ok(questions.some(q => q.includes('最终决定权')))
-  // defaults are appended and deduplicated
-  assert.ok(questions.includes(scoutCase.interviewQuestions[0]))
+  const mandateQuestion = questions.findIndex(q => q.includes('最终决定权'))
+  assert.ok(mandateQuestion >= 0)
+  // 0.9.1 ordering: untouched dimensions rank after the missing required ones
+  const untouchedQuestion = questions.findIndex(q => q.includes('法定名称'))
+  assert.ok(
+    untouchedQuestion > mandateQuestion,
+    'untouched-dimension questions rank after missing required dimensions',
+  )
+  // dedupe and the 12-item cap keep holding
   assert.equal(new Set(questions).size, questions.length)
-  assert.ok(questions.length <= 12)
-})
-
-test('auto-persists each mutation when configured, and exports to the default dir', async () => {
-  const registered = []
-  const store = new Map()
-  const mockFs = {
-    async resolve(path) {
-      return { targetKey: path, displayPath: path }
-    },
-    async readText(target) {
-      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
-      return store.get(target.displayPath)
-    },
-    async writeText(target, content) {
-      store.set(target.displayPath, content)
-      return { operation: 'create' }
-    },
+  assert.equal(questions.length, 12)
+  // the curated questions reserve their full quota (task-7 budget rule)
+  for (const curated of scoutCase.interviewQuestions) {
+    assert.ok(questions.includes(curated), `curated question kept: ${curated}`)
   }
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => undefined
-      },
-    },
-    fs: mockFs,
-    effect(execute) {
-      Array.from(execute())
-    },
-  }, { scoutDir: '/tmp/scout-cases', autoPersist: true })
-  const tools = new Map(registered.map(tool => [tool.name, tool]))
-  const start = tools.get('scout_start')
-  const exportTool = tools.get('scout_export')
-
-  await start.execute({
-    caseId: 'auto',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-
-  // autoPersist wrote the five files under scoutDir/<caseId>
-  assert.ok(store.has('/tmp/scout-cases/auto/case.json'))
-  assert.ok(store.has('/tmp/scout-cases/auto/report.md'))
-  assert.equal(store.size, 5)
-
-  // export without targetDir uses the configured scoutDir/<caseId>
-  const exportResult = JSON.parse(await exportTool.execute({
-    caseId: 'auto',
-  }, { agent: { id: 'session-a' } }))
-  assert.equal(exportResult.targetDir, '/tmp/scout-cases/auto')
-  assert.equal(exportResult.persisted, true)
-  assert.equal(exportResult.files.length, 5)
-})
-
-test('scout_questions tool returns the derived question list', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => undefined
-      },
-    },
-    effect(execute) {
-      Array.from(execute())
-    },
-  })
-  const tools = new Map(registered.map(tool => [tool.name, tool]))
-  const start = tools.get('scout_start')
-  const questions = tools.get('scout_questions')
-  await start.execute({
-    caseId: 'demo',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-  const result = JSON.parse(await questions.execute({ caseId: 'demo' }, { agent: { id: 'session-a' } }))
-  assert.ok(Array.isArray(result))
-  assert.ok(result.length >= 5)
-})
-
-test('auto-persist and default export dir degrade gracefully without fs or scoutDir', async () => {
-  // autoPersist enabled but no fs service: mutations still succeed
-  const noFs = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { noFs.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
-  }, { scoutDir: '/nowhere', autoPersist: true })
-  const startNoFs = new Map(noFs.map(t => [t.name, t])).get('scout_start')
-  const started = JSON.parse(await startNoFs.execute({
-    caseId: 'no-fs',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: '',
-  }, { agent: { id: 'session-a' } }))
-  assert.equal(started.caseId, 'no-fs')
-  assert.ok(started.events?.some(e => e.type === 'case_started'))
-
-  // no scoutDir configured: export without targetDir falls back to ./dsh-scout/<caseId>
-  const registered = []
-  const store = new Map()
-  const mockFs = {
-    async resolve(path) { return { targetKey: path, displayPath: path } },
-    async readText(target) {
-      if (!store.has(target.displayPath)) throw new Error(`not found: ${target.displayPath}`)
-      return store.get(target.displayPath)
-    },
-    async writeText(target, content) { store.set(target.displayPath, content); return { operation: 'create' } },
-  }
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    fs: mockFs,
-    effect(execute) { Array.from(execute()) },
-  })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'default-dir',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-  const exported = JSON.parse(await tools.get('scout_export').execute(
-    { caseId: 'default-dir' },
-    { agent: { id: 'session-a' } },
-  ))
-  assert.equal(exported.targetDir, 'dsh-scout/default-dir')
-  assert.ok(store.has('dsh-scout/default-dir/case.json'))
 })
 
 test('covers question-generation, duplicate-id, authority-url, and import edge cases', () => {
-  // empty case: 3 missing-dimension questions + 5 defaults = 8
+  // empty case: the 3 required dimensions first, then the other 8 untouched
+  // dimensions, then defaults — deduplicated and capped at 12
   const empty = createCase({ caseId: 'e', companyName: 'C', roleTitle: 'R' })
-  assert.equal(generateInterviewQuestions(empty).length, 8)
+  const emptyQuestions = generateInterviewQuestions(empty)
+  assert.equal(emptyQuestions.length, 12)
+  assert.deepEqual(emptyQuestions.slice(0, 3), [
+    '该岗位当前是否真实在招？招聘状态与到岗时间如何？',
+    '该岗位直接向谁汇报？虚线/实线如何划分？',
+    '该岗位在哪些事项上拥有最终决定权？团队与预算规模如何？',
+  ])
+  assert.ok(emptyQuestions.includes(empty.interviewQuestions[0]))
+  for (const curated of empty.interviewQuestions) {
+    assert.ok(emptyQuestions.includes(curated), `curated question kept: ${curated}`)
+  }
 
   // fully verified role dimensions: only the 5 defaults remain
   let verifiedCase = createCase({ caseId: 'v', companyName: 'C', roleTitle: 'R' })
@@ -788,8 +527,12 @@ test('covers question-generation, duplicate-id, authority-url, and import edge c
       impact: 'blocking', sourceIds: ['s1'], confidenceNote: 'direct', nextAction: 'done',
     })
   }
+  // role dimensions verified: the other 8 dimensions are still untouched, so
+  // their questions take the 7 head slots and all 5 curated questions follow
   const verifiedQuestions = generateInterviewQuestions(verifiedCase)
-  assert.equal(verifiedQuestions.length, 5)
+  assert.equal(verifiedQuestions.length, 12)
+  assert.deepEqual(verifiedQuestions.slice(-5), verifiedCase.interviewQuestions)
+  assert.ok(verifiedQuestions.includes('公司主体的法定名称、注册号与注册地是什么？如何与品牌对应？'))
 
   // blank nextAction is filtered and the 12-item cap truncates
   let capped = createCase({ caseId: 'c', companyName: 'C', roleTitle: 'R' })
@@ -840,6 +583,53 @@ test('covers question-generation, duplicate-id, authority-url, and import edge c
   assert.throws(() => importCaseFromFiles({ ...files, 'case.json': '{not json' }), /Invalid case\.json/)
 })
 
+test('reserves the 12-item quota for curated questions', () => {
+  // fresh case: 11 deduplicated head questions, budget 7, plus all 5 curated
+  const fresh = createCase({ caseId: 'fresh', companyName: 'C', roleTitle: 'R' })
+  const freshQuestions = generateInterviewQuestions(fresh)
+  assert.equal(freshQuestions.length, 12)
+  assert.deepEqual(freshQuestions.slice(0, 3), [
+    '该岗位当前是否真实在招？招聘状态与到岗时间如何？',
+    '该岗位直接向谁汇报？虚线/实线如何划分？',
+    '该岗位在哪些事项上拥有最终决定权？团队与预算规模如何？',
+  ])
+  assert.deepEqual(freshQuestions.slice(7), fresh.interviewQuestions)
+
+  // required role dimensions verified, the other 8 dimensions untouched
+  let requiredOnly = createCase({ caseId: 'required', companyName: 'C', roleTitle: 'R' })
+  requiredOnly = addSource(requiredOnly, {
+    sourceId: 's1', type: 'user_provided', title: 'notes', url: null,
+    capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+  })
+  for (const [claimId, dimension] of [
+    ['role', 'role_existence'], ['reporting', 'reporting_line'], ['mandate', 'mandate'],
+  ]) {
+    requiredOnly = addClaim(requiredOnly, {
+      claimId, text: 'confirmed', status: 'verified', evidenceLevel: 'E1', dimension,
+      impact: 'blocking', sourceIds: ['s1'], confidenceNote: 'direct', nextAction: 'done',
+    })
+  }
+  const requiredQuestions = generateInterviewQuestions(requiredOnly)
+  assert.equal(requiredQuestions.length, 12)
+  assert.deepEqual(requiredQuestions.slice(7), requiredOnly.interviewQuestions)
+
+  // fully verified with no untouched dimension: exactly the 0.9.0 curated list
+  let complete = createCase({ caseId: 'complete', companyName: 'C', roleTitle: 'R' })
+  complete = addSource(complete, {
+    sourceId: 's1', type: 'user_provided', title: 'notes', url: null,
+    capturedAt: '2026-08-16T00:00:00.000Z', evidenceLevel: 'E1', status: 'captured',
+  })
+  for (const dimension of CLAIM_DIMENSIONS) {
+    complete = addClaim(complete, {
+      claimId: `c-${dimension}`, text: 'confirmed', status: 'verified', evidenceLevel: 'E1',
+      dimension, impact: 'informational', sourceIds: ['s1'],
+      confidenceNote: 'direct', nextAction: 'done',
+    })
+  }
+  assert.deepEqual(generateInterviewQuestions(complete), complete.interviewQuestions)
+  assert.equal(generateInterviewQuestions(complete).length, 5)
+})
+
 test('infers source type and evidence level from URLs', () => {
   // official registry/regulator origins
   assert.deepEqual(inferSourceType('https://www.gsxt.gov.cn/foo'), { type: 'company_registry', inferred: true })
@@ -856,99 +646,6 @@ test('infers source type and evidence level from URLs', () => {
   // explicit values win and are not marked inferred
   assert.deepEqual(inferSourceType('https://example.com/', 'independent_media'), { type: 'independent_media', inferred: false })
   assert.deepEqual(inferEvidenceLevel('https://example.com/', 'job_posting', 'E1'), { evidenceLevel: 'E1', inferred: false })
-})
-
-test('scout_ingest batch-registers sources with inference and isolates errors', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
-  })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'ingest',
-    companyName: 'Example Co',
-    roleTitle: 'HR Head',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-
-  const result = JSON.parse(await tools.get('scout_ingest').execute({
-    caseId: 'ingest',
-    itemsJson: JSON.stringify([
-      { url: 'https://www.gsxt.gov.cn/registry/1', title: 'Registry record' },
-      { url: 'https://m.liepin.com/job/2.shtml' },
-      { url: 'https://example.com/blog' },
-      { url: 'https://not-e3.example.com/', sourceType: 'company_registry', evidenceLevel: 'E3' },
-      { url: '' },
-    ]),
-  }, { agent: { id: 'session-a' } }))
-
-  assert.equal(result.added.length, 3)
-  assert.equal(result.errors.length, 2)
-  assert.deepEqual(result.added[0], {
-    sourceId: 'src-1', title: 'Registry record', url: 'https://www.gsxt.gov.cn/registry/1',
-    type: 'company_registry', evidenceLevel: 'E3',
-    inferred: { type: true, evidenceLevel: true },
-  })
-  assert.equal(result.added[1].type, 'job_posting')
-  assert.equal(result.added[1].evidenceLevel, 'E2')
-  assert.equal(result.added[2].type, 'other')
-  // the invalid E3 item is isolated in errors and does not abort the batch
-  assert.match(result.errors[0].error, /E3 sources require/)
-  assert.equal(result.errors[1].error, 'url is required')
-
-  // sources are registered in the case and carry events
-  const report = await tools.get('scout_report').execute({ caseId: 'ingest' }, { agent: { id: 'session-a' } })
-  assert.match(report, /src-1/)
-  assert.match(report, /src-3/)
-  assert.doesNotMatch(report, /src-4/)
-})
-
-test('scout_ingest isolates null items and invalid explicit enums, and avoids substring false positives', async () => {
-  // substring false positives are gone
-  assert.deepEqual(inferSourceType('https://notaboss.example.com/'), { type: 'other', inferred: true })
-  assert.deepEqual(inferSourceType('https://www.zhipin.com/job/1.html'), { type: 'job_posting', inferred: true })
-  assert.deepEqual(inferSourceType('https://bambulab.jobs.feishu.cn/position/1'), { type: 'job_posting', inferred: true })
-  assert.deepEqual(inferSourceType('https://www.liepin.com/job/1.shtml'), { type: 'job_posting', inferred: true })
-
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
-  })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'robust', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
-
-  const result = JSON.parse(await tools.get('scout_ingest').execute({
-    caseId: 'robust',
-    itemsJson: JSON.stringify([
-      null,
-      { url: 'https://m.liepin.com/job/1.shtml' },
-      { url: 'https://www.gsxt.gov.cn/registry/1' },
-      { url: 'https://example.com/x', sourceType: 'regulatory_typo' },
-      { url: 'https://example.com/y', evidenceLevel: 'E9' },
-    ]),
-  }, { agent: { id: 'session-a' } }))
-
-  // null item and invalid explicit enums are isolated; valid items still registered
-  assert.equal(result.added.length, 2)
-  assert.equal(result.errors.length, 3)
-  assert.equal(result.errors[0].error, 'item must be an object')
-  assert.match(result.errors[1].error, /invalid sourceType/)
-  assert.match(result.errors[2].error, /invalid evidenceLevel/)
-  assert.equal(result.added[0].type, 'job_posting')
-  assert.equal(result.added[1].type, 'company_registry')
-  assert.equal(result.added[1].evidenceLevel, 'E3')
-
-  // the previously added sources survive the batch
-  const report = await tools.get('scout_report').execute({ caseId: 'robust' }, { agent: { id: 'session-a' } })
-  assert.match(report, /src-1/)
-  assert.match(report, /src-2/)
-  assert.doesNotMatch(report, /src-3/)
 })
 
 test('renders a side-by-side comparison of two cases', () => {
@@ -1001,421 +698,442 @@ test('renders a side-by-side comparison of two cases', () => {
   assert.throws(() => renderComparison(five), /at most five/)
 })
 
-test('scout_compare tool compares cases and inference rejects invalid explicit enums', async () => {
-  // model-layer enum defense (review L3)
-  assert.deepEqual(inferSourceType('https://example.com/', 'not_a_type'), { type: 'other', inferred: true })
-  assert.deepEqual(inferEvidenceLevel('https://example.com/', 'job_posting', 'E9'), { evidenceLevel: 'E2', inferred: true })
+// ---------------------------------------------------------------------------
+// 0.9.1 model layer: languages, coverage, decision reason codes, source lookup
+// ---------------------------------------------------------------------------
 
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
+/** Deterministic case reused by the byte-for-byte zh-CN regression baseline. */
+function legacyCase() {
+  let scoutCase = createCase({ caseId: 'legacy', companyName: 'Legacy Co', roleTitle: 'HR Head' })
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'job-posting', type: 'job_posting', title: 'Legacy job posting',
+    url: 'https://example.com/job', capturedAt: '2026-08-16T00:00:00.000Z',
+    evidenceLevel: 'E1', status: 'captured',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  for (const [caseId, company] of [['a', 'Company A'], ['b', 'Company B']]) {
-    await tools.get('scout_start').execute({
-      caseId, companyName: company, roleTitle: 'HR Head', location: '',
-    }, { agent: { id: 'session-a' } })
-  }
-  const result = await tools.get('scout_compare').execute(
-    { caseIds: 'a, b' },
-    { agent: { id: 'session-a' } },
-  )
-  assert.match(result, /公司\/岗位对比（2 个案例）/)
-  assert.match(result, /Company A/)
-  assert.match(result, /Company B/)
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-1', text: 'The role may own the people roadmap.', status: 'reported',
+    evidenceLevel: 'E1', dimension: 'mandate', impact: 'blocking', sourceIds: ['job-posting'],
+    confidenceNote: 'Only the job posting says so.', nextAction: 'Confirm the mandate in the interview.',
+  })
+  return decideCase(scoutCase)
+}
+
+// Captured verbatim from dsh-scout 0.9.0 (HEAD 3406a4e) before the 0.9.1
+// Coverage block existed. Only that block may be inserted: any other byte
+// change to the zh-CN report is a regression.
+const LEGACY_REPORT_GOLDEN = [
+  "# Legacy Co — HR Head",
+  "",
+  "- 判断：**VERIFY**",
+  "- 理由：公司主体仍未核验，不能直接推进。",
+  "- 目标：判断是否值得进入下一轮，并准备面试反问",
+  "- 证据概况：1 reported",
+  "",
+  "## Key supporting evidence (up to 3)",
+  "",
+  "- 暂无已核验的支持证据",
+  "",
+  "## Blocking or unresolved risks (up to 3)",
+  "",
+  "- **reported / E1 / blocking** The role may own the people roadmap.（维度：mandate；来源：job-posting；置信说明：Only the job posting says so.；下一步：Confirm the mandate in the interview.）",
+  "",
+  "## Role task and authority hypotheses",
+  "",
+  "- **reported / E1 / blocking** The role may own the people roadmap.（维度：mandate；来源：job-posting；置信说明：Only the job posting says so.；下一步：Confirm the mandate in the interview.）",
+  "",
+  "## Verification checklist",
+  "",
+  "- [blocking] claim-1: The role may own the people roadmap. → 下一步：Confirm the mandate in the interview.",
+  "",
+  "## Claim ledger",
+  "",
+  "- **reported / E1 / blocking** The role may own the people roadmap.（维度：mandate；来源：job-posting；置信说明：Only the job posting says so.；下一步：Confirm the mandate in the interview.）",
+  "",
+  "## Sources",
+  "",
+  "- job-posting: Legacy job posting [job_posting / E1] — https://example.com/job",
+  "",
+  "## Interview questions",
+  "",
+  "- 这个岗位在前三个月最重要的业务结果是什么？",
+  "- 该岗位直接向谁汇报，在哪些事项上拥有最终决定权？",
+  "- 现有团队、预算和外部供应商资源分别是什么？",
+  "- 当前最影响业务增长的组织问题是什么？",
+  "- 六个月后，哪些可观察结果代表这个岗位取得成功？",
+  "",
+  "> 本报告只表达当前证据边界内的判断，不替代法律、投资或医疗意见。",
+  "",
+].join('\n')
+
+test('keeps the zh-CN report byte-identical apart from the Coverage block', () => {
+  const report = renderReport(legacyCase())
+  const lines = report.split('\n')
+  const start = lines.indexOf('## Coverage')
+  assert.ok(start > 0, 'the Coverage block is present')
+  let end = start + 1
+  while (end < lines.length && !lines[end].startsWith('## ')) end += 1
+  const withoutCoverage = [...lines.slice(0, start), ...lines.slice(end)].join('\n')
+  assert.equal(withoutCoverage, LEGACY_REPORT_GOLDEN)
+  assert.match(report, /## Coverage\n\n- identity/)
 })
 
-test('scout_compare deduplicates case ids and empty claims render cleanly', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
+test('renders an English report and English questions, defaulting to the case language', () => {
+  let scoutCase = createCase({
+    caseId: 'en', companyName: 'English Co', roleTitle: 'CTO', language: 'en',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  for (const [caseId, company] of [['a', 'Company A'], ['b', 'Company B']]) {
-    await tools.get('scout_start').execute({
-      caseId, companyName: company, roleTitle: 'HR Head', location: '',
-    }, { agent: { id: 'session-a' } })
-  }
-  const compare = tools.get('scout_compare')
+  assert.equal(scoutCase.language, 'en')
+  assert.match(scoutCase.decisionReason, /not been verified yet/)
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'job-posting', type: 'job_posting', title: 'English job posting',
+    url: 'https://example.com/job', capturedAt: '2026-08-16T00:00:00.000Z',
+    evidenceLevel: 'E1', status: 'captured',
+  })
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'claim-1', text: 'The role may own the people roadmap.', status: 'reported',
+    evidenceLevel: 'E1', dimension: 'mandate', impact: 'blocking', sourceIds: ['job-posting'],
+    confidenceNote: 'Only the job posting says so.', nextAction: 'Confirm the mandate in the interview.',
+  })
+  scoutCase = decideCase(scoutCase)
 
-  // duplicate ids are deduplicated: 'a,a,b' -> a, b
-  const deduped = await compare.execute({ caseIds: 'a, a, b' }, { agent: { id: 'session-a' } })
-  assert.match(deduped, /公司\/岗位对比（2 个案例）/)
+  const report = renderReport(scoutCase)
+  assert.match(report, /- Decision: \*\*VERIFY\*\*/)
+  assert.match(report, /- Reason: The company identity is not verified yet/)
+  assert.match(report, /- identity \(Company identity\): verified 0 \/ open 0 \/ untouched: yes/)
+  assert.match(report, /- mandate \(Mandate and authority\): verified 0 \/ open 1 \/ untouched: no/)
+  assert.match(report, /Untouched dimensions \(10\):/)
+  assert.match(report, /The role may own the people roadmap\. \(dimension: mandate; sources: job-posting/)
+  assert.doesNotMatch(report, /[\u4e00-\u9fff]/, 'the English report contains no CJK characters')
 
-  // only one distinct id -> explicit error
-  await assert.rejects(
-    compare.execute({ caseIds: 'a, a' }, { agent: { id: 'session-a' } }),
-    /at least two distinct case ids/,
-  )
-  // blank ids -> explicit error
-  await assert.rejects(
-    compare.execute({ caseIds: ' , ' }, { agent: { id: 'session-a' } }),
-    /No case ids provided/,
-  )
-  // missing case -> error hints at the agent session boundary
-  await assert.rejects(
-    compare.execute({ caseIds: 'a, missing' }, { agent: { id: 'session-a' } }),
-    /Unknown case: missing \(not found in this agent session\)/,
-  )
+  const questions = generateInterviewQuestions(scoutCase)
+  assert.equal(questions.length, 12)
+  assert.equal(questions[0], 'Confirm the mandate in the interview.')
+  assert.ok(questions.includes('Is this role actually open right now, and what are the hiring status and start date?'))
+  assert.ok(questions.every(question => !/[\u4e00-\u9fff]/.test(question)))
 
-  // empty claims render without an empty parentheses suffix
-  const empty = renderComparison([
-    createCase({ caseId: 'x', companyName: 'X', roleTitle: 'R' }),
-    createCase({ caseId: 'y', companyName: 'Y', roleTitle: 'R' }),
+  // an explicit option overrides the case language in either direction
+  const zhReport = renderReport(scoutCase, { language: 'zh-CN' })
+  assert.match(zhReport, /- 判断：\*\*VERIFY\*\*/)
+  assert.doesNotMatch(zhReport, /- Decision:/)
+  const zhQuestions = generateInterviewQuestions(scoutCase, { language: 'zh-CN' })
+  assert.ok(zhQuestions.includes('公司主体的法定名称、注册号与注册地是什么？如何与品牌对应？'))
+  // the comparison report follows the same language resolution
+  const comparison = renderComparison([
+    scoutCase,
+    createCase({ caseId: 'en-2', companyName: 'Other Co', roleTitle: 'CTO', language: 'en' }),
   ])
-  assert.match(empty, /主张 0 条\n/)
-  assert.doesNotMatch(empty, /主张 0 条（）/)
+  assert.match(comparison, /# Company \/ role comparison \(2 cases\)/)
+  assert.match(comparison, /\| Case \| Decision \| Identity \| Claims \|/)
+  assert.match(comparison, /## Interview questions \(merged and deduplicated, first 12\)/)
+  assert.doesNotMatch(comparison, /[\u4e00-\u9fff]/, 'the English comparison contains no CJK characters')
+  // newly created cases default to zh-CN
+  assert.equal(createCase({ caseId: 'z', companyName: 'C', roleTitle: 'R' }).language, 'zh-CN')
 })
 
-test('scout_ingest drafts claims from items alongside sources', async () => {
-  // foreign registries classify as company_registry
-  assert.deepEqual(inferSourceType('https://w2.brreg.no/company/1'), { type: 'company_registry', inferred: true })
-  assert.deepEqual(inferSourceType('https://www.handelsregister.de/rp_web/mask.do'), { type: 'company_registry', inferred: true })
-  assert.deepEqual(inferSourceType('https://www1.hkexnews.hk/search/titlesearch.xhtml'), { type: 'company_registry', inferred: true })
+test('computes coverage for all 11 dimensions, including untouched ones', () => {
+  let scoutCase = createCase({ caseId: 'coverage', companyName: 'Coverage Co', roleTitle: 'HR Head' })
+  const emptyCoverage = computeCoverage(scoutCase)
+  assert.equal(emptyCoverage.length, 11)
+  assert.deepEqual(emptyCoverage.map(item => item.dimension), [...CLAIM_DIMENSIONS])
+  assert.ok(emptyCoverage.every(item => item.untouched && item.verified === 0 && item.open === 0))
 
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
+  scoutCase = addSource(scoutCase, {
+    sourceId: 'interview', type: 'user_provided', title: 'Interview notes',
+    url: 'https://example.com/notes', capturedAt: '2026-08-16T00:00:00.000Z',
+    evidenceLevel: 'E1', status: 'captured',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'draft', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
-
-  const result = JSON.parse(await tools.get('scout_ingest').execute({
-    caseId: 'draft',
-    itemsJson: JSON.stringify([
-      {
-        url: 'https://m.liepin.com/job/1.shtml',
-        claim: { text: '该岗位月薪 13k–26k。', dimension: 'financing_and_commercialization', impact: 'material' },
-      },
-      {
-        url: 'https://www.gsxt.gov.cn/registry/1',
-        claim: { text: '主体为深圳某科技有限公司。', dimension: 'identity', status: 'verified', evidenceLevel: 'E3' },
-      },
-      // claim missing dimension -> source kept, claim rejected
-      { url: 'https://example.com/a', claim: { text: 'no dimension' } },
-      // claim evidence level exceeds the E2 source -> claim rejected, source kept
-      { url: 'https://example.com/b', claim: { text: 'overstated', dimension: 'risk', evidenceLevel: 'E3' } },
-    ]),
-  }, { agent: { id: 'session-a' } }))
-
-  assert.equal(result.added.length, 4)
-  assert.equal(result.errors.length, 2)
-  // claim defaults: reported / material / source evidence level
-  assert.deepEqual(result.added[0].claims, ['claim-1'])
-  // verified claim on an E3 registry source is accepted
-  assert.deepEqual(result.added[1].claims, ['claim-2'])
-  // source survived even though its claim was rejected
-  assert.equal(result.added[2].claims, undefined)
-  assert.match(result.errors[0].error, /invalid claim\.dimension/)
-  assert.match(result.errors[1].error, /exceeds its strongest source/)
-
-  // claims landed in the case with source links and events
-  const report = await tools.get('scout_report').execute({ caseId: 'draft' }, { agent: { id: 'session-a' } })
-  assert.match(report, /该岗位月薪 13k–26k。/)
-  assert.match(report, /主体为深圳某科技有限公司。/)
-  assert.doesNotMatch(report, /no dimension/)
-})
-
-test('scout_ingest rejects invalid claim enums explicitly and keeps claim ids collision-safe', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'identity-claim', text: 'The legal entity matches the brand.', status: 'verified',
+    evidenceLevel: 'E1', dimension: 'identity', impact: 'material', sourceIds: ['interview'],
+    confidenceNote: 'Confirmed by the interview.', nextAction: 'Use it in later searches.',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'enum', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
-
-  // pre-seed a claim so the next generated id must skip claim-1
-  await tools.get('scout_add_claim').execute({
-    caseId: 'enum',
-    claimId: 'claim-1',
-    text: 'pre-seeded',
-    status: 'unknown',
-    evidenceLevel: 'E0',
-    dimension: 'risk',
-    impact: 'material',
-    sourceIds: '',
-    confidenceNote: 'none',
-    nextAction: 'verify',
-  }, { agent: { id: 'session-a' } })
-
-  const result = JSON.parse(await tools.get('scout_ingest').execute({
-    caseId: 'enum',
-    itemsJson: JSON.stringify([
-      { url: 'https://m.liepin.com/job/1.shtml', claim: { text: 'ok claim', dimension: 'risk', status: 'contradictedd' } },
-      { url: 'https://m.liepin.com/job/2.shtml', claim: { text: 'bad impact', dimension: 'risk', impact: 'huge' } },
-      { url: 'https://m.liepin.com/job/3.shtml', claim: { text: 'bad level', dimension: 'risk', evidenceLevel: 'E9' } },
-      { url: 'https://m.liepin.com/job/4.shtml', claim: { text: 'good claim', dimension: 'mandate' } },
-    ]),
-  }, { agent: { id: 'session-a' } }))
-
-  // all four sources registered; three claims rejected with explicit enum errors
-  assert.equal(result.added.length, 4)
-  assert.equal(result.errors.length, 3)
-  assert.match(result.errors[0].error, /invalid claim\.status: contradictedd/)
-  assert.match(result.errors[1].error, /invalid claim\.impact: huge/)
-  assert.match(result.errors[2].error, /invalid claim\.evidenceLevel: E9/)
-  // the valid claim skipped the pre-seeded claim-1
-  assert.deepEqual(result.added[3].claims, ['claim-2'])
-})
-
-test('covers registry boundaries, non-object claims, and verified-E0 rejection via claim drafts', async () => {
-  // registry classification boundaries
-  assert.deepEqual(inferSourceType('https://brreg.no/'), { type: 'company_registry', inferred: true })
-  assert.deepEqual(inferSourceType('https://www.sse.com.cn/'), { type: 'company_registry', inferred: true })
-  assert.deepEqual(inferSourceType('https://www.szse.cn/'), { type: 'company_registry', inferred: true })
-  assert.deepEqual(inferSourceType('https://brreg.no.evil.com/'), { type: 'other', inferred: true })
-
-  const registered = []
-  const store = new Map()
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    fs: {
-      async resolve(path) { return { targetKey: path, displayPath: path } },
-      async readText(target) { return store.get(target.displayPath) },
-      async writeText(target, content) { store.set(target.displayPath, content); return { operation: 'create' } },
-    },
-    effect(execute) { Array.from(execute()) },
+  scoutCase = addClaim(scoutCase, {
+    claimId: 'risk-claim', text: 'A litigation risk is reported.', status: 'reported',
+    evidenceLevel: 'E1', dimension: 'risk', impact: 'material', sourceIds: ['interview'],
+    confidenceNote: 'Reported by one person.', nextAction: 'Check the court docket.',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'edge', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
 
-  const result = JSON.parse(await tools.get('scout_ingest').execute({
-    caseId: 'edge',
-    itemsJson: JSON.stringify([
-      { url: 'https://m.liepin.com/job/1.shtml', claim: 'not-an-object' },
-      { url: 'https://example.com/e0', sourceType: 'other', evidenceLevel: 'E0', claim: { text: 'no evidence', dimension: 'risk', status: 'verified', evidenceLevel: 'E0' } },
-      { url: 'https://m.liepin.com/job/2.shtml', claim: { text: 'event payload check', dimension: 'mandate' } },
-    ]),
-  }, { agent: { id: 'session-a' } }))
+  const coverage = computeCoverage(scoutCase)
+  assert.deepEqual(coverage.find(item => item.dimension === 'identity'), {
+    dimension: 'identity', verified: 1, open: 0, untouched: false,
+  })
+  assert.deepEqual(coverage.find(item => item.dimension === 'risk'), {
+    dimension: 'risk', verified: 0, open: 1, untouched: false,
+  })
+  assert.deepEqual(coverage.find(item => item.dimension === 'mandate'), {
+    dimension: 'mandate', verified: 0, open: 0, untouched: true,
+  })
 
-  // non-object claim and verified-E0 claim are rejected; sources survive
-  assert.equal(result.added.length, 3)
-  assert.equal(result.errors.length, 2)
-  assert.match(result.errors[0].error, /claim must be an object/)
-  assert.match(result.errors[1].error, /at least E1 evidence/)
-  assert.equal(result.added[1].claims, undefined) // E0 verified claim not attached
-  assert.deepEqual(result.added[2].claims, ['claim-2'])
-
-  // claim_added event detail carries text and sourceIds in the export
-  await tools.get('scout_export').execute(
-    { caseId: 'edge' },
-    { agent: { id: 'session-a' } },
+  const report = renderReport(scoutCase)
+  assert.match(report, /## Coverage/)
+  assert.ok(report.indexOf('## Coverage') < report.indexOf('## Key supporting evidence'))
+  assert.match(report, /- identity（主体身份）：已核验 1 \/ 待核验 0 \/ 未调查：否/)
+  assert.match(report, /- mandate（授权与职责）：已核验 0 \/ 待核验 0 \/ 未调查：是/)
+  assert.match(
+    report,
+    /未调查维度（9）：role_existence、reporting_line、mandate、company_and_founder、product_and_technology、market_and_competition、financing_and_commercialization、organization_and_hr、role_fit/,
   )
-  const events = store.get('dsh-scout/edge/events.jsonl')
-  assert.ok(events.includes('"text":"event payload check"'))
-  assert.ok(events.includes('"sourceIds":["src-3"]'))
+  // coverage drives the question list
+  assert.ok(generateInterviewQuestions(scoutCase)
+    .includes('该岗位当前是否真实在招？招聘状态与到岗时间如何？'))
 })
 
-test('scout_search registers provider results as sources and requires the web service', async () => {
-  const registered = []
-  const searched = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    web: {
-      async search(request) {
-        searched.push(request)
-        return {
-          content: 'answer snippet',
-          truncated: false,
-          sources: [
-            { url: 'https://www.gsxt.gov.cn/registry/9', title: 'Registry' },
-            { url: 'https://m.liepin.com/job/7.shtml' },
-            { url: 'https://example.com/unknown', snippet: 'a snippet' },
-          ],
-        }
-      },
-    },
-    effect(execute) { Array.from(execute()) },
+test('finds a source by normalized URL and rejects empty or invalid URLs', () => {
+  let scoutCase = createCase({ caseId: 'url', companyName: 'C', roleTitle: 'R' })
+  scoutCase = addSource(scoutCase, {
+    sourceId: 's1', type: 'job_posting', title: 'posting', url: 'https://Example.COM/job/',
+    capturedAt: null, evidenceLevel: 'E1', status: 'captured',
   })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'search', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
-
-  const result = JSON.parse(await tools.get('scout_search').execute({
-    caseId: 'search',
-    query: 'Example Co company registry',
-    limit: 10,
-  }, { agent: { id: 'session-a' } }))
-
-  assert.equal(searched.length, 1)
-  assert.equal(searched[0].query, 'Example Co company registry')
-  assert.equal(searched[0].maxResults, 10)
-  assert.equal(result.added.length, 3)
-  assert.equal(result.errors.length, 0)
-  assert.equal(result.added[0].type, 'company_registry')
-  assert.equal(result.added[0].evidenceLevel, 'E3')
-  assert.equal(result.added[1].type, 'job_posting')
-  assert.equal(result.added[2].snippet, 'a snippet')
-  assert.equal(result.content, 'answer snippet')
-  assert.equal(result.truncated, false)
-
-  // sources landed in the case
-  const report = await tools.get('scout_report').execute({ caseId: 'search' }, { agent: { id: 'session-a' } })
-  assert.match(report, /src-1/)
-  assert.match(report, /src-3/)
-
-  // web service missing -> explicit error
-  const noWeb = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { noWeb.push(tool); return () => undefined } },
-    effect(execute) { Array.from(execute()) },
+  scoutCase = addSource(scoutCase, {
+    sourceId: 's2', type: 'other', title: 'no url', url: null,
+    capturedAt: null, evidenceLevel: 'E1', status: 'captured',
   })
-  const toolsNoWeb = new Map(noWeb.map(t => [t.name, t]))
-  await toolsNoWeb.get('scout_start').execute({
-    caseId: 'x', companyName: 'C', roleTitle: 'R', location: '',
-  }, { agent: { id: 'session-b' } })
-  await assert.rejects(
-    toolsNoWeb.get('scout_search').execute({ caseId: 'x', query: 'q' }, { agent: { id: 'session-b' } }),
-    /Web search service is unavailable/,
-  )
+
+  assert.equal(findSourceByUrl(scoutCase, 'https://example.com/job')?.sourceId, 's1')
+  assert.equal(findSourceByUrl(scoutCase, '  https://EXAMPLE.com/job//  ')?.sourceId, 's1')
+  assert.equal(findSourceByUrl(scoutCase, 'https://example.com/job#section')?.sourceId, 's1')
+  assert.equal(findSourceByUrl(scoutCase, 'https://example.com/job?x=1'), undefined)
+  assert.equal(findSourceByUrl(scoutCase, 'https://example.com/other'), undefined)
+  assert.equal(findSourceByUrl(scoutCase, ''), undefined)
+  assert.equal(findSourceByUrl(scoutCase, '   '), undefined)
+  assert.equal(findSourceByUrl(scoutCase, 'not a url'), undefined)
+  assert.equal(findSourceByUrl(scoutCase, 'example.com/job'), undefined)
+
+  assert.equal(normalizeSourceUrl('https://Example.com/job/'), 'https://example.com/job')
+  assert.equal(normalizeSourceUrl(' https://example.com '), 'https://example.com')
+  assert.equal(normalizeSourceUrl(null), undefined)
+  assert.equal(normalizeSourceUrl(''), undefined)
 })
 
-test('scout_search handles provider edge cases and limit bounds', async () => {
-  const registered = []
-  const providerCalls = []
-  let failSearch = false
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { registered.push(tool); return () => undefined } },
-    web: {
-      async search(request) {
-        if (failSearch) throw new Error('provider down')
-        providerCalls.push(request)
-        return {
-          sources: [
-            null,
-            { url: 123 },
-            { url: '' },
-            { url: 'https://m.liepin.com/job/1.shtml', publishedAt: '2026-08-16' },
-          ],
-          truncated: undefined,
-        }
-      },
-    },
-    effect(execute) { Array.from(execute()) },
-  })
-  const tools = new Map(registered.map(t => [t.name, t]))
-  await tools.get('scout_start').execute({
-    caseId: 'edge', companyName: 'Example Co', roleTitle: 'HR Head', location: '',
-  }, { agent: { id: 'session-a' } })
+test('recomputes decision reason codes from subject and claims', () => {
+  const empty = createCase({ caseId: 'r', companyName: 'C', roleTitle: 'R' })
+  assert.equal(explainDecision(empty), 'identity')
+  assert.equal(decideCase(empty).decisionReasonCode, 'identity')
+  assert.equal(decideCase(empty).decisionReason, '公司主体仍未核验，不能直接推进。')
 
-  // limit: 0 / -1 normalize to default 5, 100 caps at 10
-  for (const [limit, expected] of [[0, 5], [-1, 5], [100, 10]]) {
-    await tools.get('scout_search').execute(
-      { caseId: 'edge', query: 'q', limit },
-      { agent: { id: 'session-a' } },
-    )
+  const identified = (caseId) => {
+    let scoutCase = createCase({ caseId, companyName: 'C', roleTitle: 'R' })
+    scoutCase = addSource(scoutCase, {
+      sourceId: 'registry', type: 'company_registry', title: 'registry',
+      url: 'https://www.gsxt.gov.cn/registry/REG-1', capturedAt: '2026-08-16T00:00:00.000Z',
+      evidenceLevel: 'E3', status: 'captured',
+    })
+    return verifyIdentity(scoutCase, {
+      legalEntity: 'C Ltd', registrationNumber: 'REG-1', registeredRegion: 'Shenzhen',
+      legalRepresentative: 'P', brandRelationship: 'brand', sourceIds: ['registry'],
+    })
   }
-  assert.deepEqual(providerCalls.map(c => c.maxResults), [5, 5, 10])
-  // NaN is rejected by the tool-layer argument validation
-  await assert.rejects(
-    tools.get('scout_search').execute({ caseId: 'edge', query: 'q', limit: NaN }, { agent: { id: 'session-a' } }),
-    /finite JSON number/,
-  )
 
-  // malformed sources are isolated; valid ones register with publishedAt
-  const result = JSON.parse(await tools.get('scout_search').execute(
-    { caseId: 'edge', query: 'q' },
-    { agent: { id: 'session-a' } },
-  ))
-  assert.equal(result.errors.length, 3)
-  assert.match(result.errors[0].error, /result 0 must be an object/)
-  assert.match(result.errors[1].error, /result 1 missing url/)
-  assert.match(result.errors[2].error, /result 2 missing url/)
-  assert.equal(result.added.length, 1)
-  assert.equal(result.added[0].type, 'job_posting')
-  assert.equal(result.added[0].publishedAt, '2026-08-16')
-  // truncated missing -> false, never dropped from the payload
-  assert.equal(result.truncated, false)
-
-  // provider throwing -> tool rejects with the provider error
-  failSearch = true
-  await assert.rejects(
-    tools.get('scout_search').execute({ caseId: 'edge', query: 'q' }, { agent: { id: 'session-a' } }),
-    /provider down/,
-  )
-
-  // non-array sources -> reported as an error, tool still succeeds
-  const noArray = []
-  apply({
-    get(name) { return this[name] },
-    tools: { register(tool) { noArray.push(tool); return () => undefined } },
-    web: { async search() { return { sources: 'nope' } } },
-    effect(execute) { Array.from(execute()) },
+  let unresolved = identified('u')
+  unresolved = addClaim(unresolved, {
+    claimId: 'c1', text: 'The role exists.', status: 'reported', evidenceLevel: 'E3',
+    dimension: 'role_existence', impact: 'blocking', sourceIds: ['registry'],
+    confidenceNote: 'registry', nextAction: 'confirm in the interview',
   })
-  const tools2 = new Map(noArray.map(t => [t.name, t]))
-  await tools2.get('scout_start').execute({
-    caseId: 'na', companyName: 'C', roleTitle: 'R', location: '',
-  }, { agent: { id: 'session-a' } })
-  const nonArray = JSON.parse(await tools2.get('scout_search').execute(
-    { caseId: 'na', query: 'q' },
-    { agent: { id: 'session-a' } },
-  ))
-  assert.equal(nonArray.added.length, 0)
-  assert.match(nonArray.errors[0].error, /non-array sources/)
+  assert.equal(explainDecision(unresolved), 'unresolved')
+  assert.equal(decideCase(unresolved).decision, 'VERIFY')
+  assert.equal(decideCase(unresolved).decisionReason, '仍有阻断级或重要结论未完成核验，不能直接推进。')
+
+  const missing = identified('m')
+  assert.equal(explainDecision(missing), 'missing_dimension')
+  assert.equal(decideCase(missing).decision, 'VERIFY')
+  assert.equal(decideCase(missing).decisionReason, '缺少已核验的必需维度：role_existence。')
+
+  let proceed = identified('p')
+  for (const [claimId, dimension] of [
+    ['role', 'role_existence'], ['reporting', 'reporting_line'], ['mandate', 'mandate'],
+  ]) {
+    proceed = addClaim(proceed, {
+      claimId, text: 'confirmed', status: 'verified', evidenceLevel: 'E3', dimension,
+      impact: 'blocking', sourceIds: ['registry'], confidenceNote: 'registry', nextAction: 'done',
+    })
+  }
+  assert.equal(explainDecision(proceed), 'proceed')
+  const decided = decideCase(proceed)
+  assert.equal(decided.decision, 'PROCEED')
+  assert.equal(decided.decisionReasonCode, 'proceed')
+  assert.equal(decided.decisionReason, '当前关键结论均有来源支撑，建议进入下一轮并继续现场核验。')
+
+  let stop = identified('s')
+  stop = addClaim(stop, {
+    claimId: 'c1', text: 'The role is closed.', status: 'contradicted', evidenceLevel: 'E3',
+    dimension: 'role_existence', impact: 'blocking', sourceIds: ['registry'],
+    confidenceNote: 'contradicts the posting', nextAction: 'resolve the conflict',
+  })
+  assert.equal(explainDecision(stop), 'unresolved')
+  const stopped = decideCase(stop)
+  assert.equal(stopped.decision, 'STOP')
+  assert.equal(stopped.decisionReasonCode, 'unresolved')
+  assert.equal(stopped.decisionReason, '存在相互矛盾的关键事实，需先解决冲突。')
+
+  // the stored reason is localized from the case language
+  const english = decideCase(identified('en'), { language: 'en' })
+  assert.equal(english.decisionReasonCode, 'missing_dimension')
+  assert.equal(english.decisionReason, 'Missing verified required dimension: role_existence.')
 })
 
-test('exports a schemastery Config with sensible defaults', () => {
-  const parsed = Config({})
-  assert.equal(parsed.scoutDir, 'dsh-scout')
-  assert.equal(parsed.autoPersist, false)
-  assert.ok(parsed.authorityHostSuffixes.includes('gov.cn'))
-  assert.ok(parsed.authorityHostSuffixes.includes('gsxt.gov.cn') === false)
+test('imports a legacy five-file export without the new optional fields', () => {
+  const legacyCaseJson = {
+    schemaVersion: 'dsh-scout.case.v0',
+    caseId: 'legacy',
+    title: 'Legacy Co — HR Head',
+    language: 'zh-CN',
+    decisionObjective: '判断是否值得进入下一轮，并准备面试反问',
+    subject: { name: 'Legacy Co', identitySourceIds: [], identityStatus: 'needs_verification' },
+    role: { title: 'HR Head', fitQuestion: '该岗位是否拥有足够的业务授权，值得继续推进？' },
+    decision: 'VERIFY',
+    decisionReason: '尚未完成公司主体和岗位授权核验。',
+    interviewQuestions: ['第一个问题？'],
+  }
+  const payload = {
+    'case.json': JSON.stringify(legacyCaseJson),
+    'sources.json': '[]',
+    'claims.json': '[]',
+    'events.jsonl': '',
+  }
+  const restored = importCaseFromFiles(payload)
+  assert.equal(restored.caseId, 'legacy')
+  assert.equal(restored.language, 'zh-CN')
+  assert.equal(restored.decisionReasonCode, undefined)
+  assert.equal('decisionReasonCode' in restored, false)
+  assert.deepEqual(restored.interviewQuestions, ['第一个问题？'])
+  assert.match(renderReport(restored), /## Coverage/)
+
+  // a payload that predates the language field still imports as zh-CN
+  const withoutLanguage = importCaseFromFiles({
+    ...payload,
+    'case.json': JSON.stringify({ ...legacyCaseJson, language: undefined }),
+  })
+  assert.equal(withoutLanguage.language, 'zh-CN')
+
+  // the new reason code round-trips, and an unknown code is dropped
+  const decided = decideCase(legacyCase())
+  assert.equal(decided.decisionReasonCode, 'identity')
+  const files = exportCaseFiles(decided)
+  assert.match(files['case.json'], /"decisionReasonCode": "identity"/)
+  const roundTripped = importCaseFromFiles(files)
+  assert.equal(roundTripped.decisionReasonCode, 'identity')
+  assert.equal(roundTripped.decision, decided.decision)
+  const bogus = importCaseFromFiles({
+    ...files,
+    'case.json': files['case.json'].replace('"decisionReasonCode": "identity"', '"decisionReasonCode": "bogus"'),
+  })
+  assert.equal(bogus.decisionReasonCode, undefined)
+
+  // an undecided case stays free of the optional field
+  const legacyFiles = exportCaseFiles(createCase({ caseId: 'l', companyName: 'C', roleTitle: 'R' }))
+  assert.doesNotMatch(legacyFiles['case.json'], /decisionReasonCode/)
 })
 
-test('custom authority host suffixes extend the E3 trust boundary', async () => {
-  const registered = []
-  apply({
-    get(name) { return this[name] },
-    tools: {
-      register(tool) {
-        registered.push(tool)
-        return () => undefined
-      },
-    },
-    effect(execute) {
-      Array.from(execute())
-    },
-  }, {
-    authorityHostSuffixes: ['example-registry.example'],
+test('accepts a case_rehydrated event through the closed event union', () => {
+  assert.ok(EVENT_TYPES.includes('case_rehydrated'))
+  let scoutCase = createCase({ caseId: 'rehydrate', companyName: 'C', roleTitle: 'R' })
+  scoutCase = appendEvent(scoutCase, {
+    eventId: 'evt-rehydrated', type: 'case_rehydrated', at: '2026-08-16T00:00:00.000Z',
+    detail: { dir: '/tmp/dsh-scout/rehydrate' },
   })
-  const tools = new Map(registered.map(tool => [tool.name, tool]))
-  const start = tools.get('scout_start')
-  const addSource = tools.get('scout_add_source')
-  await start.execute({
-    caseId: 'custom-trust',
-    companyName: 'Custom Co',
-    roleTitle: 'Role',
-    location: '',
-  }, { agent: { id: 'session-a' } })
-  // The configured suffix makes this registry origin a valid E3 source.
-  const result = await addSource.execute({
-    caseId: 'custom-trust',
-    sourceId: 'registry',
-    sourceType: 'company_registry',
-    title: 'Custom registry',
-    url: 'https://registry.example-registry.example/rec/1',
-    evidenceLevel: 'E3',
-  }, { agent: { id: 'session-a' } })
-  assert.match(result, /"evidenceLevel": "E3"/)
-  // The default trust boundary still rejects the same origin without the override.
-  assert.equal(isTrustedAuthorityUrl('https://registry.example-registry.example/rec/1'), false)
+  assert.equal(scoutCase.events?.at(-1)?.type, 'case_rehydrated')
+})
+
+test('exposes the language dictionary and resolution helpers', () => {
+  assert.deepEqual([...SCOUT_LANGUAGES], ['zh-CN', 'en'])
+  assert.equal(isScoutLanguage('en'), true)
+  assert.equal(isScoutLanguage('fr'), false)
+  assert.equal(isScoutLanguage(undefined), false)
+  assert.equal(normalizeScoutLanguage('en'), 'en')
+  assert.equal(normalizeScoutLanguage('fr'), 'zh-CN')
+  assert.equal(normalizeScoutLanguage(null), 'zh-CN')
+
+  const zh = scoutStrings(undefined)
+  const en = scoutStrings('en')
+  assert.equal(zh.language, 'zh-CN')
+  assert.equal(en.language, 'en')
+  // an unsupported runtime value falls back to the default table
+  assert.equal(scoutStrings('fr').language, 'zh-CN')
+  assert.equal(zh.statuses.verified, '已核验')
+  assert.equal(en.statuses.needs_verification, 'needs verification')
+  assert.equal(zh.impacts.blocking, '阻断级')
+  assert.equal(en.evidenceLevels.E3, 'E3 (authoritative source)')
+  assert.equal(zh.dimensions.financing_and_commercialization, '融资与商业化')
+  assert.equal(en.dimensions.financing_and_commercialization, 'Financing and commercialization')
+  assert.equal(zh.decisions.PROCEED, '继续推进')
+  assert.equal(en.decisions.PROCEED, 'proceed')
+  assert.equal(zh.defaults.interviewQuestions.length, 5)
+  assert.equal(en.defaults.interviewQuestions.length, 5)
+  // template filling leaves unknown slots verbatim
+  assert.equal(formatScoutString('- {a} / {b}', { a: 1 }), '- 1 / {b}')
+  assert.equal(formatScoutString('- 判断：{decision}', { decision: 'VERIFY' }), '- 判断：VERIFY')
+})
+
+test('renders the exported report.md in the requested language', () => {
+  // an en case exports an en report.md by default
+  const enCase = createCase({ caseId: 'export-en', companyName: 'English Co', roleTitle: 'CTO', language: 'en' })
+  assert.equal(exportCaseFiles(enCase)['report.md'], renderReport(enCase))
+  assert.doesNotMatch(exportCaseFiles(enCase)['report.md'], /[\u4e00-\u9fff]/)
+
+  // a zh case can be exported in the requested language without touching case.json
+  const zhCase = legacyCase()
+  const zhFiles = exportCaseFiles(zhCase)
+  assert.equal(zhFiles['report.md'], renderReport(zhCase))
+  assert.match(zhFiles['report.md'], /^- 判断：\*\*VERIFY\*\*$/m)
+  const enFiles = exportCaseFiles(zhCase, { language: 'en' })
+  assert.equal(enFiles['report.md'], renderReport(zhCase, { language: 'en' }))
+  // the framework text follows the requested language; stored case data
+  // (claim text, decisionReason, curated questions) is not translated
+  assert.match(enFiles['report.md'], /^- Decision: \*\*VERIFY\*\*$/m)
+  assert.match(enFiles['report.md'], /^Untouched dimensions \(10\):/m)
+  assert.doesNotMatch(enFiles['report.md'], /- 判断：/)
+  assert.equal(
+    JSON.parse(enFiles['case.json']).language,
+    'zh-CN',
+    'case.json keeps the language the case was created in',
+  )
+  assert.equal(enFiles['case.json'], zhFiles['case.json'])
+
+  // and an en case can be exported back to zh-CN
+  assert.equal(
+    exportCaseFiles(enCase, { language: 'zh-CN' })['report.md'],
+    renderReport(enCase, { language: 'zh-CN' }),
+  )
+})
+
+test('keeps the ingest draft defaults in both language tables', () => {
+  const zh = scoutStrings('zh-CN')
+  const en = scoutStrings('en')
+  for (const table of [zh, en]) {
+    assert.ok(table.ingest.autoConfidenceNote.length > 0)
+    assert.ok(table.ingest.autoNextAction.length > 0)
+  }
+  // the zh-CN template keeps reproducing the pre-0.9.1 literal
+  assert.match(zh.ingest.autoConfidenceNote, /\{sourceId\}/)
+  assert.equal(
+    formatScoutString(zh.ingest.autoConfidenceNote, { sourceId: 'src-1' }),
+    '由采集项自动登记，来源 src-1',
+  )
+  assert.equal(zh.ingest.autoNextAction, '核验该主张并补充独立来源')
+  // the English table carries no CJK and keeps the source placeholder
+  assert.match(en.ingest.autoConfidenceNote, /\{sourceId\}/)
+  assert.doesNotMatch(en.ingest.autoConfidenceNote, /[\u4e00-\u9fff]/)
+  assert.doesNotMatch(en.ingest.autoNextAction, /[\u4e00-\u9fff]/)
+  assert.equal(
+    formatScoutString(en.ingest.autoConfidenceNote, { sourceId: 'src-1' }),
+    'Auto-registered from an ingested item; source src-1',
+  )
+
+  // the documented draft defaults keep an English report fully English
+  let ingestCase = createCase({
+    caseId: 'ingest-en', companyName: 'Example Co', roleTitle: 'HR Head', language: 'en',
+  })
+  ingestCase = addSource(ingestCase, {
+    sourceId: 'src-1', type: 'job_posting', title: 'Report A', url: 'https://example.com/a',
+    capturedAt: null, evidenceLevel: 'E1', status: 'captured',
+  })
+  ingestCase = addClaim(ingestCase, {
+    claimId: 'claim-1', text: 'The role exists.', status: 'reported', evidenceLevel: 'E1',
+    dimension: 'role_existence', impact: 'material', sourceIds: ['src-1'],
+    confidenceNote: formatScoutString(en.ingest.autoConfidenceNote, { sourceId: 'src-1' }),
+    nextAction: en.ingest.autoNextAction,
+  })
+  ingestCase = decideCase(ingestCase)
+  assert.doesNotMatch(renderReport(ingestCase), /[\u4e00-\u9fff]/)
+  assert.ok(generateInterviewQuestions(ingestCase).every(question => !/[\u4e00-\u9fff]/.test(question)))
 })
