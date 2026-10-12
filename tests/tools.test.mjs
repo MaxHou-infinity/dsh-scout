@@ -844,3 +844,43 @@ test('the render budget holds even for pathologically long free-text fields', as
   const content = renderOutput(mounted, 'scout_add_claim', value)
   assert.ok(outputBytes(content) <= 1024, `render was ${outputBytes(content)} bytes`)
 })
+
+test('a language change re-localizes untouched case-authored copy but keeps user edits', async () => {
+  const store = new Map()
+  const seed = (caseId, dir, mutate) => {
+    let scoutCase = createCase({ caseId, companyName: 'Example Co', roleTitle: 'HR Head' })
+    if (mutate) scoutCase = mutate(scoutCase)
+    for (const [fileName, content] of Object.entries(exportCaseFiles(scoutCase))) {
+      store.set(`${dir}/${fileName}`, content)
+    }
+    store.set(`${dir}/export.complete.json`, '{"schemaVersion":"dsh-scout.export.v1","complete":true}\n')
+  }
+  seed('relabel', '/tmp/relabel')
+  seed('edited', '/tmp/edited', scoutCase => ({
+    ...scoutCase,
+    decisionObjective: 'Prüfen, ob diese Rolle passt.',
+  }))
+
+  const mounted = mountPlugin({ config: { language: 'en' }, services: { fs: mockFs(store) } })
+  const cjk = /[\u4e00-\u9fff]/
+
+  const imported = await mounted.tools.get('scout_import').execute({ caseId: 'relabel', sourceDir: '/tmp/relabel' }, execFor())
+  assert.equal(imported.complete, true)
+  const report = (await mounted.tools.get('scout_report').execute({ caseId: 'relabel' }, execFor())).report
+  assert.doesNotMatch(report, cjk, 'an en deployment must not render mixed-language case prose')
+  assert.match(report, /- Objective: Decide whether this role is worth pursuing/)
+  const questions = await mounted.tools.get('scout_questions').execute({ caseId: 'relabel' }, execFor())
+  assert.ok(questions.questions.every(question => !cjk.test(question)), 'interview questions must follow the deployment language')
+
+  // The exported case.json now agrees with its own content language.
+  const exported = await mounted.tools.get('scout_export').execute({ caseId: 'relabel', targetDir: '/tmp/relabel-out' }, execFor())
+  assert.equal(exported.persisted, true)
+  const caseJson = JSON.parse(store.get('/tmp/relabel-out/case.json'))
+  assert.equal(caseJson.language, 'en')
+  assert.doesNotMatch(caseJson.decisionObjective, cjk)
+
+  // A value the user wrote is not a factory default and must survive untouched.
+  await mounted.tools.get('scout_import').execute({ caseId: 'edited', sourceDir: '/tmp/edited' }, execFor())
+  const edited = (await mounted.tools.get('scout_report').execute({ caseId: 'edited' }, execFor())).report
+  assert.match(edited, /Prüfen, ob diese Rolle passt\./)
+})

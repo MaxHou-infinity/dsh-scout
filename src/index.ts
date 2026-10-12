@@ -35,7 +35,13 @@ import {
   type ScoutSource,
   type SourceType,
 } from './model.js'
-import { formatScoutString, normalizeScoutLanguage, scoutStrings, type ScoutLanguage } from './i18n.js'
+import {
+  formatScoutString,
+  isScoutLanguage,
+  normalizeScoutLanguage,
+  scoutStrings,
+  type ScoutLanguage,
+} from './i18n.js'
 
 export const name = 'dsh-scout'
 export const inject = ['tools']
@@ -363,14 +369,50 @@ export function apply(ctx: Context, config: Config = {}) {
 
   /** Resolved once from validated config; every renderer and decision follows it. */
   const language: ScoutLanguage = normalizeScoutLanguage(config.language)
+  const strings = scoutStrings(language)
+
+  /**
+   * Case-authored copy (objective, fit question, curated interview questions) is
+   * written in the language the case was created in. When this deployment
+   * renders in another language, the still-untouched factory defaults are
+   * swapped for this deployment's own defaults, so `case.json` never claims one
+   * language while carrying another language's prose. A value the user edited
+   * no longer equals a factory default and is deliberately left alone.
+   */
+  const alignCaseDefaults = (scoutCase: ScoutCase): ScoutCase => {
+    const declared = isScoutLanguage(scoutCase.language) ? scoutCase.language : undefined
+    const source = scoutStrings(declared)
+    if (source.language === strings.language) return scoutCase
+    const swap = (current: string, from: string, to: string) => (current === from ? to : current)
+    const curated = scoutCase.interviewQuestions ?? []
+    const factory = source.defaults.interviewQuestions
+    const curatedIsUntouched = curated.length === factory.length
+      && curated.every((question, index) => question === factory[index])
+    return {
+      ...scoutCase,
+      decisionObjective: swap(
+        scoutCase.decisionObjective,
+        source.defaults.decisionObjective,
+        strings.defaults.decisionObjective,
+      ),
+      role: {
+        ...scoutCase.role,
+        fitQuestion: swap(
+          scoutCase.role.fitQuestion,
+          source.defaults.fitQuestion,
+          strings.defaults.fitQuestion,
+        ),
+      },
+      interviewQuestions: curatedIsUntouched ? [...strings.defaults.interviewQuestions] : curated,
+    }
+  }
+
   const decide = (scoutCase: ScoutCase): ScoutCase => ({
-    ...decideCase(scoutCase, { language }),
-    // Keep the case's own label in sync with the language this deployment renders in,
-    // so case.json never claims one language while carrying another's prose.
+    ...decideCase(alignCaseDefaults(scoutCase), { language }),
+    // Keep the case's own label in sync with the language this deployment renders in.
     language,
   })
   const renderReportOf = (scoutCase: ScoutCase) => renderReport(scoutCase, { language })
-  const strings = scoutStrings(language)
 
   // Resolved per call so a later-mounted (or replaced) provider is honored.
   const fsService = () => ctx.get('fs') as ScoutFs | undefined
