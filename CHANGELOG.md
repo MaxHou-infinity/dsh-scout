@@ -33,6 +33,8 @@
 - **写盘转发 `exec.signal`**：`scout_export` 的写盘可被取消。
 - **`scout_import` 如实报告导出完整性**：它读完成标记的 `complete` **字段**（不是「标记文件是否存在」）。没有标记的旧导出、或标记为 `complete: false` 的导出，只要五个数据文件都已落盘仍可导入，但返回 `complete: false`，由调用方决定是否信任该快照（五个数据文件缺任何一个，例如在写 `claims.json` 时中断的全新导出，仍是硬失败）。
 - **导出路径以会话 cwd 为基准**：`scoutDir` 的相对路径不再落到 DSH 进程的当前目录。
+- **`scout` Skill 补上必填的 `source`**：`SkillRegistration` 只把 `invocation` / `provider` 变成可选，`source` 仍是非可选字段，而注册表只为 `provider` 补默认值。此前注册**不会报错**（`validateRuntimeSkill` 不校验 `source`），模型侧技能目录也不受影响（只含 name/description），但 `ctx.skills.list()` 返回的 `SkillSummary` 违反其自身声明的非可选字段——`source` 读回 `undefined`。现注册为 `source: 'runtime'`；真实宿主实测由 `{"name":"scout","provider":"runtime"}` 变为 `{"name":"scout","source":"runtime","provider":"runtime"}`。
+- **`@deepseek-ai/dsh-tools` 不再标为 optional peer**：它是构建产物 `dist/index.js` 里真实的运行时 `import`（`@deepseek-ai/cordis` 只有类型导入、会被擦除，故保持 optional）。这**不影响** DSH 的兼容门禁（`evaluatePluginCompatibility` 只读 `peerDependencies`，无视 `peerDependenciesMeta`），只是让安装期信号与真实依赖关系一致。
 
 ### Note
 

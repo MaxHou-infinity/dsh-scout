@@ -54,9 +54,6 @@
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
       "optional": true
-    },
-    "@deepseek-ai/dsh-tools": {
-      "optional": true
     }
   },
   "devDependencies": {

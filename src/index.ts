@@ -129,6 +129,12 @@ interface ScoutSkills {
     description: string
     content: string
     whenToUse?: string
+    /**
+     * Provenance bucket. `SkillRegistration` omits only `invocation` and
+     * `provider` from the full definition, so `source` stays required; the
+     * registry defaults `provider` but never `source`.
+     */
+    source: string
     invocation?: { modelInvocable?: boolean; userInvocable?: boolean }
   }): () => void
 }
@@ -1342,6 +1348,10 @@ export function apply(ctx: Context, config: Config = {}) {
     description: 'Evidence-driven company and job due diligence with the dsh-scout tools.',
     whenToUse: 'When the user asks whether a company/role is worth pursuing, or wants a background check with sources and interview questions.',
     content: SCOUT_SKILL_CONTENT,
+    // `SkillRegistration` keeps `source` required (only invocation/provider are
+    // optional); the registry defaults provider but never source, so omitting it
+    // yields a summary whose declared non-optional `source` reads back undefined.
+    source: 'runtime',
     invocation: { modelInvocable: true, userInvocable: true },
   }))
 }

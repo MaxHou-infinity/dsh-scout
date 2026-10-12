@@ -60,6 +60,13 @@ function mountPlugin({ config, services = {} } = {}) {
   const disposed = []
   const effects = []
   const injections = []
+  // A real ctx.effect accepts either a generator of disposers (as the tool
+  // registration uses) or a callback returning one disposer.
+  const collectEffects = (execute) => {
+    const result = execute()
+    if (result && typeof result[Symbol.iterator] === 'function') effects.push(...result)
+    else if (typeof result === 'function') effects.push(result)
+  }
   const ctx = {
     get(serviceName) {
       return this[serviceName]
@@ -70,11 +77,22 @@ function mountPlugin({ config, services = {} } = {}) {
         return () => disposed.push(tool.name)
       },
     },
-    effect(execute) {
-      effects.push(...execute())
-    },
+    effect: collectEffects,
     inject(dependencies, callback) {
       injections.push([...dependencies, callback])
+      // Mirror the real binding: the callback runs against a child context that
+      // sees the injected services and owns its own effect scope. Without this
+      // the optional-seam registrations (command, Skill) would never run here.
+      const child = {
+        get(serviceName) {
+          return this[serviceName]
+        },
+        effect: collectEffects,
+      }
+      for (const dependency of dependencies) {
+        if (dependency in ctx) child[dependency] = ctx[dependency]
+      }
+      callback(child)
     },
   }
   Object.assign(ctx, services)
@@ -883,4 +901,74 @@ test('a language change re-localizes untouched case-authored copy but keeps user
   await mounted.tools.get('scout_import').execute({ caseId: 'edited', sourceDir: '/tmp/edited' }, execFor())
   const edited = (await mounted.tools.get('scout_report').execute({ caseId: 'edited' }, execFor())).report
   assert.match(edited, /Prüfen, ob diese Rolle passt\./)
+})
+
+/* ------------------------------------------------------------------ *
+ * Optional seams: the /scout command and the scout Skill
+ * ------------------------------------------------------------------ */
+
+test('the /scout command and scout Skill register definitions the host accepts', async () => {
+  const commands = []
+  const skills = []
+  mountPlugin({
+    services: {
+      commands: {
+        register(definition) {
+          commands.push(definition)
+          return () => undefined
+        },
+      },
+      skills: {
+        register(definition) {
+          skills.push(definition)
+          return () => undefined
+        },
+      },
+    },
+  })
+
+  // CommandDefinition: lowercase slug, non-empty description, function handler.
+  assert.equal(commands.length, 1)
+  const command = commands[0]
+  assert.match(command.name, /^[a-z][a-z0-9_-]*$/, 'COMMAND_NAME requires a lowercase slug')
+  assert.ok(command.description.trim().length > 0)
+  assert.equal(typeof command.handler, 'function')
+
+  // CommandResult: success carries optional text, error must carry text.
+  const help = await command.handler({ rawInput: '', agent: { id: 'session-a' } })
+  assert.equal(help.kind, 'success')
+  assert.match(help.text, /\/scout status/)
+  const missing = await command.handler({ rawInput: 'status nope', agent: { id: 'session-a' } })
+  assert.equal(missing.kind, 'error')
+  assert.equal(typeof missing.text, 'string')
+  assert.ok(missing.text.length > 0)
+
+  // SkillRegistration: name is kebab-case, description/content non-empty, and
+  // `source` stays required — the registry defaults `provider` but never `source`,
+  // so omitting it yields a summary whose declared non-optional source is undefined.
+  assert.equal(skills.length, 1)
+  const skill = skills[0]
+  assert.match(skill.name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'SKILL_NAME requires a kebab-case identifier')
+  assert.ok(skill.description.trim().length > 0)
+  assert.ok(skill.content.length > 0)
+  assert.equal(typeof skill.source, 'string')
+  assert.ok(skill.source.length > 0, 'source is required by SkillRegistration and is never defaulted')
+  assert.deepEqual(skill.invocation, { modelInvocable: true, userInvocable: true })
+})
+
+test('an absent optional service only skips that registration', async () => {
+  const skills = []
+  mountPlugin({
+    services: {
+      skills: {
+        register(definition) {
+          skills.push(definition)
+          return () => undefined
+        },
+      },
+    },
+  })
+  // `commands` was never mounted, so nothing is registered for it and the plugin
+  // still loads (the real binding leaves that child fiber pending).
+  assert.equal(skills.length, 1)
 })
