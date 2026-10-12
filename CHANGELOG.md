@@ -12,10 +12,10 @@
 
 - **`/scout` 命令**：注册 `ctx.commands.register({ name: 'scout', … })`，提供 `status` / `questions` / `report` / `export` 四个子动作（用法：`/scout status <caseId> | /scout questions <caseId> | /scout report <caseId> | /scout export <caseId> [targetDir]`）；宿主在处理前后自动落 `command/run` + `command/done` 事件（这两个名字都在宿主已知事件词表内，因此会话可重建）。
 - **`scout` Skill**：由插件直接注册（`ctx.skills.register`，不需要落文件、不需要 client bundle），内含标准尽调工作流（start → search/ingest → claim → verify_identity → report → questions）与四条证据纪律。插件卸载时条目随 disposer 消失。
-- **`language: 'zh-CN' | 'en'` 配置**（默认 `zh-CN`）：控制报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）的语言；默认值对既有用户零变化。
+- **`language: 'zh-CN' | 'en'` 配置**（默认 `zh-CN`）：控制报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）的语言；它还会对齐案例自带、**仍是出厂默认**的文案，但判定粒度不同——`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐），精选面试问题是**整组 all-or-nothing**（整组逐项未被编辑才对齐；改过任意一条则整组保留创建语言，`en` 报告此时仍含约 79 个 CJK 字符）。**用户编辑过的文案保持原样**；与案例自带语言相同时是 no-op，默认值对既有用户零变化。
 - **报告新增 `## Coverage` 调查覆盖度区块**：对全部 11 个调查维度给出「已核验 / 待核验 / 未调查」计数，并单列未调查维度；`scout_questions` 会优先为未调查维度生成问题。
-- **导出完成标记 `export.complete.json`**：内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`；写入时**先置 `complete: false`，五个数据文件全部落盘后再改写为 `complete: true`**——所以陈旧标记不会为半份导出宣称完整（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。
-- **惰性回填**：缓存未命中时，若 `<scoutDir>/<caseId>/` 存在五文件导出，则读回案例并追加 `case_rehydrated` 事件；错误信息会提示可用的 caseId / 建议 `scout_import`。
+- **导出完成标记 `export.complete.json`**：内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`；写入时**先置 `complete: false`，五个数据文件全部落盘后再改写为 `complete: true`**——所以陈旧标记不会为半份导出宣称完整（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。**`eventCount` 只有在 `complete: true` 时才与 `events.jsonl` 的行数一致**；导出中断时它记录的是那次失败尝试期望的事件数，请以 `complete` 为准。
+- **惰性回填仅限完整导出**：缓存未命中时，只有当 `<scoutDir>/<caseId>/` 的完成标记为 `complete: true` 时才读回案例并追加 `case_rehydrated` 事件；**0.9.0 的旧导出没有完成标记，不会被自动回填**，需用 `scout_import` 显式恢复；错误信息会提示可用的 caseId / 建议 `scout_import`。
 - **分发契约字段**：`engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`）、`dsh.manifestVersion: 1`、`locale/en.json` + `locale/zh.json`（已写进 `exports`，否则会被 ESM resolver 静默忽略）、包内 `icon`。
 - **本 CHANGELOG**。
 
@@ -50,3 +50,10 @@
 - **`@deepseek-ai/schemastery` 版本对齐**（`^3.18.2` → 宿主系列的 `~3.18.4`）：本轮明确不做。
 - **`presentationMeta` 载荷**：没有 client 消费者时没有可见收益，与 client 面板一起在 0.10.0 落地。
 - **npm 发布 / git tag**：本轮只做本地交付。
+
+### Known boundaries
+
+刻意保留的行为边界（不是待修缺陷，但读文档的人需要知道）：
+
+- **精选面试问题整组对齐**：`alignCaseDefaults` 对精选面试问题采用 **all-or-nothing** 判定——整组逐项都仍是出厂默认时才对齐到部署语言；用户改过其中任意一条，整组保留创建语言（其余未编辑的条目也不会逐条转换），`en` 部署的报告此时仍含约 79 个 CJK 字符。这是有意保守（不猜用户意图）。**按条对齐（数组下标逐项替换）排在 0.9.2。**
+- **惰性回填只认完整导出**：只有完成标记 `complete: true` 的导出才会在缓存未命中时自动回填；0.9.0 的旧导出没有该标记，不会被自动恢复，需用 `scout_import` 显式导入。

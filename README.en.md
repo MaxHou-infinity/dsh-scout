@@ -236,7 +236,7 @@ Configure `dsh-scout` in the DSH profile's `cordis.patch.yml`:
 
 - A relative `scoutDir` resolves against the **session cwd**, not the DSH process cwd;
 - With `autoPersist: true`, every mutation persists automatically; **failures are visible**: the return value carries `persist.persisted=false` plus `persist.error`, and no `case_exported` event is written;
-- `language` affects the report, interview questions, the comparison report, and the explanatory text that `scout_ingest` writes into auto-drafted claims (`confidenceNote` / `nextAction`); the `zh-CN` default is a no-op for existing users.
+- `language` affects the report, interview questions, the comparison report, and the explanatory text that `scout_ingest` writes into auto-drafted claims (`confidenceNote` / `nextAction`); it also aligns case-owned text that is **still at its factory default**, at two different granularities: `decisionObjective` / `role.fitQuestion` are decided **per field** (a field still at its factory default is aligned), while curated interview questions are **all-or-nothing as a group** (aligned only when every entry is unedited; if any one was edited the whole group keeps its creation language, and an `en` report then still contains ~79 CJK characters). **User-edited text is left as-is**; it is a no-op when it matches the case's own language, so the `zh-CN` default changes nothing for existing users.
 
 ## Data persistence
 
@@ -254,9 +254,9 @@ export.complete.json   since 0.9.1: completion marker (written as complete:false
 ```
 
 - The export order is "**record the `case_exported` event first, then write files**", so the on-disk `events.jsonl` includes that export; "export → import → export again" yields a stable event sequence;
-- The completion marker `export.complete.json` holds `{ schemaVersion, caseId, complete, files, eventCount }`: it is written as **`complete: false` before any file is written** and rewritten to `complete: true` only after all five data files have landed — so **a stale marker never claims completeness for a half-written export** (when overwriting, the previous successful marker is downgraded before the new files are written). `scout_import` reads the marker's **`complete` field**, not merely whether the marker file exists;
+- The completion marker `export.complete.json` holds `{ schemaVersion, caseId, complete, files, eventCount }`: it is written as **`complete: false` before any file is written** and rewritten to `complete: true` only after all five data files have landed — so **a stale marker never claims completeness for a half-written export** (when overwriting, the previous successful marker is downgraded before the new files are written). `scout_import` reads the marker's **`complete` field**, not merely whether the marker file exists; **`eventCount` matches the line count of `events.jsonl` only when `complete: true`** (after an interrupted export it records the event count that failed attempt expected);
 - `scout_import` accepts a **legacy export with no completion marker**; when the marker is missing or says `complete: false`, the import still proceeds **as long as all five data files are present**, but the return value reports `complete: false` so the caller can decide whether to trust the snapshot (a brand-new export missing any of the five files — e.g. interrupted while writing `claims.json` — still fails hard);
-- **No manual import after a session restore**: on a cache miss, if `<scoutDir>/<caseId>/` holds an export, the plugin lazily rehydrates it and appends a `case_rehydrated` event, keeping a "case that appeared from nowhere" auditable.
+- **Whether a session restore rehydrates automatically depends on export completeness**: on a cache miss, **only a complete export** (completion marker `complete: true`) is lazily rehydrated, appending a `case_rehydrated` event, keeping a "case that appeared from nowhere" auditable; **a 0.9.0 export has no completion marker and is never auto-rehydrated** — restore it explicitly with `scout_import`.
 
 ## Design boundaries
 

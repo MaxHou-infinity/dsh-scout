@@ -236,7 +236,7 @@ dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 
 - 相对 `scoutDir` 以**会话的 cwd** 为基准解析，不再落到 DSH 进程的当前目录；
 - `autoPersist: true` 时，每次变更后自动落盘；**失败可见**：返回值带 `persist.persisted=false` + `persist.error`，且不会写 `case_exported` 事件；
-- `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；默认 `zh-CN`，对既有用户零变化。
+- `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；它还会对齐案例自带、**仍是出厂默认**的文案，但判定粒度不同：`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐），精选面试问题是**整组 all-or-nothing**（整组逐项未被编辑才对齐；改过任意一条则整组保留创建语言，`en` 报告此时仍含约 79 个 CJK 字符）。**用户编辑过的文案保持原样**；与案例自带语言相同时是 no-op，默认 `zh-CN` 对既有用户零变化。
 
 ## 数据持久化
 
@@ -254,9 +254,9 @@ export.complete.json   0.9.1 起：完成标记（先写 complete:false，五文
 ```
 
 - 导出顺序是「**先记 `case_exported` 事件、后写文件**」，所以磁盘上的 `events.jsonl` 包含本次导出；「导出 → 导入 → 再导出」的事件序列稳定；
-- 完成标记 `export.complete.json` 的内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`：**写入前先置 `complete: false`**，五个数据文件全部落盘后再改写为 `complete: true`——所以**陈旧标记不会为半份导出宣称完整**（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」；
+- 完成标记 `export.complete.json` 的内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`：**写入前先置 `complete: false`**，五个数据文件全部落盘后再改写为 `complete: true`——所以**陈旧标记不会为半份导出宣称完整**（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」；**`eventCount` 只有在 `complete: true` 时才与磁盘上 `events.jsonl` 的行数一致**（导出中断时它记录的是那次失败尝试期望的事件数）；
 - `scout_import` 能导入**没有完成标记**的旧导出；标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报 `complete: false`，由调用方决定是否信任这份快照（五个数据文件缺任何一个、例如在写 `claims.json` 时中断的全新导出，仍是硬失败）；
-- **会话恢复后不必手动 import**：缓存未命中时，若 `<scoutDir>/<caseId>/` 存在导出，插件会惰性回填并追加 `case_rehydrated` 事件，让"凭空出现"的 case 状态仍然可审计。
+- **会话恢复是否自动回填，取决于导出是否完整**：缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才会被惰性回填，并追加 `case_rehydrated` 事件，让"凭空出现"的 case 状态仍然可审计；**0.9.0 的旧导出没有完成标记，不会被自动回填**，需要用 `scout_import` 显式恢复。
 
 ## 何时不要用（设计边界）
 

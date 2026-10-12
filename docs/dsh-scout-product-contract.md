@@ -9,7 +9,7 @@
 
 - **输出契约**：变更类工具不再回吐整份 case JSON，改为「结构化对象 `value` + <1KB 紧凑 render」；全量数据仍由 `scout_report` / `scout_export` 提供。
 - **落盘可信度**：`autoPersist` 失败可见化（返回值 `persist.persisted=false` + `persist.error`）；导出统一为「先记事件、后写文件」；导出目录写 `export.complete.json` 完成标记（**先置 `complete:false`、五文件写完再置 `complete:true`**）；`scout_import` 读标记的 `complete` 字段，缺失或不完整时报告 `complete: false`；写盘转发 `exec.signal`。
-- **服务绑定与路径**：`fs` / `web` 改为调用时解析（不再在 `apply()` 时快照）；导出返回解析后的绝对路径；缓存未命中时从 `<scoutDir>/<caseId>/` 惰性回填并记 `case_rehydrated`。
+- **服务绑定与路径**：`fs` / `web` 改为调用时解析（不再在 `apply()` 时快照）；导出返回解析后的绝对路径；缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才从 `<scoutDir>/<caseId>/` 惰性回填并记 `case_rehydrated`（0.9.0 旧导出无完成标记，需显式 `scout_import`）。
 - **可解释与双语**：新增 `language: 'zh-CN' | 'en'`（默认 `zh-CN`）；报告新增 `## Coverage` 调查覆盖度区块。
 - **显式入口**：新增 `/scout` 命令（`status` / `questions` / `report` / `export` 四个子动作）与插件注册的 `scout` Skill。
 - **分发契约**：`engines.dsh`、`dsh.manifestVersion: 1`、`locale/en.json` + `locale/zh.json`（必须写进 `exports`，否则被静默忽略）、包内 `icon`。
@@ -56,6 +56,8 @@ scout-cases/<case-id>/
 ```
 
 0.9.1 起，五个数据文件之外还有一个完成标记 `export.complete.json`，内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`。写入顺序是：**先**把标记写成 `complete: false`，五个数据文件全部落盘后**再**改写为 `complete: true`。因此**陈旧标记不会为半份导出宣称完整**——在覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级为 `complete: false`。
+
+标记里的 `eventCount` **只有在 `complete: true` 时才与磁盘上 `events.jsonl` 的行数一致**：导出中断时，它记录的是那次失败尝试**期望**的事件数，可能与实际行数不同。读取方请以 `complete` 为准，不要只看 `eventCount`。
 
 `scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」：标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报告 `complete: false`，让调用方自己决定是否信任这份快照。也就是说：中断的导出只要五个数据文件都在，仍可导入，但会被如实标为不完整；五个数据文件缺任何一个（例如在写 `claims.json` 时中断的全新导出）仍是硬失败。
 
