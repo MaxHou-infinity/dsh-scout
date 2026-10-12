@@ -12,7 +12,7 @@ jobs:
   release:
     name: verify + publish
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
@@ -36,17 +36,23 @@ jobs:
       - name: Pack the tarball
         run: pnpm pack
 
+      - name: Require npm publish credential
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo '::error::NPM_TOKEN is required before creating a release'
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: |
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' >> .npmrc
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create GitHub Release with tarball
         uses: softprops/action-gh-release@v2
         with:
           files: dsh-scout-*.tgz
           generate_release_notes: true
           update_release: true
-
-      - name: Publish to npm (only when the NPM_TOKEN secret is configured)
-        if: env.NPM_TOKEN != ''
-        run: |
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' >> .npmrc
-          npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

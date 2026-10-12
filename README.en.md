@@ -3,7 +3,7 @@
 [![ci](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
-[![dsh-tools 0.1.2-rc.1](https://img.shields.io/badge/dsh-tools-0.1.2--rc.1-4b32c3)](package.json)
+[![DSH nightly compatibility](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)
 [![tests 34 passing](https://img.shields.io/badge/tests-34%20passing-green)](tests/model.test.mjs)
 [![中文 README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-2ea44f)](README.md)
 
@@ -49,7 +49,7 @@ pnpm test
 pnpm run check:release
 ```
 
-The tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, auto-persist, question generation, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into an isolated temporary DSH profile, verifies `--dump-config`, checks the mounted tools, and observes the Cordis unload disposer. The gate uses `DSH_BIN` or a local `dsh` binary when available; otherwise it downloads the exact official CLI version `0.1.2-rc.1` through `npx`.
+The 34 tests cover the conservative decision default, evidence-level constraints, identity verification, session isolation, report rendering, export/import round-trips, auto-persist, question generation, and tool cleanup on unload. `check:release` additionally packs the plugin, installs it into isolated temporary DSH profiles for the four exact versions in the table below, verifies `--dump-config`, checks the mounted tools, observes the Cordis unload disposer, and checks package contents. `test:profile` uses `DSH_BIN` when explicitly set; otherwise it downloads the exact `DSH_VERSION` (default `0.2.0-rc.2`) through `npx`.
 
 ## Install into a DSH profile
 
@@ -60,7 +60,20 @@ dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 dsh --profile scout-demo --dump-config
 ```
 
-Git installs fetch source and run `prepare`. pnpm may require an explicit `allowBuilds` entry for `dsh-scout`; only allow a pinned source you have reviewed. The current package targets DeepSeek Harness `0.1.2-rc.1`, `@deepseek-ai/dsh-tools` `0.1.2-rc.1`, and `@deepseek-ai/cordis` `4.0.2+`.
+Git installs fetch source and run `prepare`. pnpm may require an explicit `allowBuilds` entry for `dsh-scout`; only allow a pinned source you have reviewed. The `@deepseek-ai/dsh-tools` peer range is `>=0.1.0-rc.6 <0.3.0-0`; the `@deepseek-ai/cordis` peer range is `>=4.0.2 <5`.
+
+### DSH compatibility
+
+DSH checks a plugin's `@deepseek-ai/dsh-*` peers at install and startup, including prereleases. The `<0.3.0-0` upper bound excludes `0.3.0-alpha` and later releases. **Verified on 2026-10-12** with the 0.9.0 candidate tarball in isolated profiles, covering installation, cold startup, tool mounting, and unload:
+
+| DSH version | npm channel on that date | Result |
+| --- | --- | --- |
+| `0.1.0-rc.6` | Declared lower bound | Pass |
+| `0.1.2-rc.1` | Older release regression | Pass |
+| `0.2.0-rc.2` | `latest` / `next` | Pass |
+| `0.2.1-alpha.2` | `alpha` | Pass |
+
+Future `0.2.x` versions still require runtime verification. The [nightly compatibility workflow](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml) resolves npm's `latest`, `next`, and `alpha` tags to exact versions before testing each one. The badge shows the latest workflow result; this table records versions already verified.
 
 ## Configuration (optional)
 
@@ -87,4 +100,4 @@ See [the product contract](docs/dsh-scout-product-contract.md) for the full MVP 
 
 ## Community
 
-This is an independent community plugin for DeepSeek Harness. The repository uses the `dsh-plugin`, `deepseek-harness`, `due-diligence`, `company-research`, `job-research`, `hr-tech`, and `evidence-based` topics for discovery.
+This is an independent community plugin for DeepSeek Harness. The repository uses the `dsh-plugin`, `deepseek-harness`, `due-diligence`, `company-research`, `job-research`, `hr-tech`, and `evidence-based` topics for discovery. For install or startup failures, use the [compatibility issue template](https://github.com/MaxHou-infinity/dsh-scout/issues/new?template=compatibility.yml) with exact versions and redacted logs.

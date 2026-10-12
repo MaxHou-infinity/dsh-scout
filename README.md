@@ -3,7 +3,7 @@
 [![ci](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/ci.yml)
 [![license MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![node >=22.19](https://img.shields.io/badge/node-%3E%3D22.19-brightgreen)](package.json)
-[![dsh-tools 0.1.2-rc.1](https://img.shields.io/badge/dsh-tools-0.1.2--rc.1-4b32c3)](package.json)
+[![DSH 兼容性夜间检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml/badge.svg)](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)
 [![tests 34 passing](https://img.shields.io/badge/tests-34%20passing-green)](tests/model.test.mjs)
 [![English README](https://img.shields.io/badge/README-English-blue)](README.en.md)
 
@@ -119,7 +119,20 @@ dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 dsh --profile scout-demo --dump-config   # 验证工具挂载
 ```
 
-要求：Node ≥ 22.19；面向 DeepSeek Harness `0.1.2-rc.1`、`@deepseek-ai/dsh-tools` `0.1.2-rc.1` 与 `@deepseek-ai/cordis` `4.0.2+`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
+要求：Node ≥ 22.19；`@deepseek-ai/dsh-tools` peer 范围为 `>=0.1.0-rc.6 <0.3.0-0`，`@deepseek-ai/cordis` 为 `>=4.0.2 <5`。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
+
+### DSH 兼容性
+
+DSH 安装和启动时会检查插件的 `@deepseek-ai/dsh-*` peer；预发布版本也参与匹配。上界 `<0.3.0-0` 排除 `0.3.0-alpha` 及之后的版本。以下是 **2026-10-12 在隔离 profile 中用 0.9.0 候选 tarball 实测**的版本，覆盖安装、冷启动、工具挂载和卸载：
+
+| DSH 版本 | npm 渠道（核对当日） | 结果 |
+| --- | --- | --- |
+| `0.1.0-rc.6` | 兼容范围下界 | 通过 |
+| `0.1.2-rc.1` | 旧版回归 | 通过 |
+| `0.2.0-rc.2` | `latest` / `next` | 通过 |
+| `0.2.1-alpha.2` | `alpha` | 通过 |
+
+未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
 
 ## 配置（可选）
 
@@ -166,6 +179,8 @@ pnpm test        # 34 个测试：决策默认值/证据约束/主体核验/会�
 pnpm run check:release
 ```
 
+`check:release` 在运行 34 项测试后，分别用表中的四个精确 DSH 版本安装候选 tarball 并检查 profile 生命周期，最后检查打包内容。
+
 ## 路线图
 
 - ✅ v0.1：证据纪律、三态决策、结构化报告、会话隔离
@@ -178,4 +193,4 @@ pnpm run check:release
 
 ## 社区
 
-面向 DeepSeek Harness 的独立社区插件（Topic：`dsh-plugin`、`deepseek-harness`、`due-diligence`、`company-research`、`job-research`、`hr-tech`、`evidence-based`）。欢迎 Issues / PR。
+面向 DeepSeek Harness 的独立社区插件（Topic：`dsh-plugin`、`deepseek-harness`、`due-diligence`、`company-research`、`job-research`、`hr-tech`、`evidence-based`）。安装或启动遇到问题时，请用[兼容性问题模板](https://github.com/MaxHou-infinity/dsh-scout/issues/new?template=compatibility.yml)提供精确版本和脱敏日志；也欢迎其他 Issues / PR。

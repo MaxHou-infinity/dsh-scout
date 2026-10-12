@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-const DSH_VERSION = '0.1.2-rc.1'
+const DSH_VERSION = process.env.DSH_VERSION ?? '0.2.0-rc.2'
 const command = name => process.platform === 'win32' ? `${name}.cmd` : name
-const localDsh = join(process.cwd(), 'node_modules', '.bin', command('dsh'))
 const dshCommand = process.env.DSH_BIN
   ? { program: process.env.DSH_BIN, prefix: [] }
-  : existsSync(localDsh)
-    ? { program: localDsh, prefix: [] }
-    : { program: 'npx', prefix: ['--yes', `@deepseek-ai/dsh@${DSH_VERSION}`] }
+  : { program: 'npx', prefix: ['--yes', `@deepseek-ai/dsh@${DSH_VERSION}`] }
 
 function run(program, args, options = {}) {
   const result = spawnSync(command(program), args, {
@@ -95,7 +91,7 @@ export async function apply(ctx) {
   ], { capture: true, env: gateEnv })
   assert.match(lifecycle, /DSH_SCOUT_LOAD/)
   assert.match(lifecycle, /DSH_SCOUT_UNLOAD/)
-  console.log('dsh-scout profile smoke: PASS')
+  console.log(`dsh-scout profile smoke: PASS (dsh ${DSH_VERSION})`)
 } finally {
   await rm(gateRoot, { recursive: true, force: true })
 }

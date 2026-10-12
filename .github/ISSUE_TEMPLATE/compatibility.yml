@@ -1,0 +1,49 @@
+name: Installation or compatibility problem
+description: Report a DSH version mismatch, install failure, or startup denial.
+body:
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Where did it fail?
+      options:
+        - Installing the plugin
+        - Starting the DSH profile
+        - Using a Scout tool
+    validations:
+      required: true
+  - type: input
+    id: dsh_version
+    attributes:
+      label: Exact DSH version
+      placeholder: 0.2.0-rc.2
+    validations:
+      required: true
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Exact dsh-scout version
+      placeholder: 0.9.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, Node version, and profile name
+      placeholder: macOS 15, Node 22.19, web profile
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Install source, command, and reproduction steps
+      placeholder: Include the exact npm package version or pinned Git commit.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error message and relevant logs
+      description: Remove API keys, private paths, and personal data before posting.
+      render: text
+    validations:
+      required: true

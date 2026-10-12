@@ -1,0 +1,49 @@
+name: DSH compatibility
+
+on:
+  schedule:
+    # 03:00 Asia/Shanghai each day.
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile-smoke:
+    name: ${{ matrix.channel }} install + test + startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [latest, next, alpha]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        run: npm install --global pnpm@11.21.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve exact DSH version
+        env:
+          DSH_CHANNEL: ${{ matrix.channel }}
+        run: |
+          version="$(npm view "@deepseek-ai/dsh@${DSH_CHANNEL}" version --json | node -e 'const value = JSON.parse(require("node:fs").readFileSync(0, "utf8")); const version = Array.isArray(value) && value.length === 1 ? value[0] : value; if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("Expected one exact DSH version"); process.stdout.write(version)')"
+          echo "DSH_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "DSH ${DSH_CHANNEL} resolved to ${version}"
+          echo "DSH ${DSH_CHANNEL}: ${version}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and run unit tests
+        run: npm test
+
+      - name: Install tarball into isolated profile and check startup
+        run: npm run test:profile
