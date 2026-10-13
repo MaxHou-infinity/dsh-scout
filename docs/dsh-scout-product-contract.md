@@ -5,16 +5,24 @@
 
 当前实现进度：首个公开切片已经覆盖 session 隔离的内存 case、封闭来源类型、主体核验、claim 证据历史、保守三态决策、结构化报告、卸载清理和临时 DSH profile 安装门禁；v0.2 已落地持久化五文件导出（`scout_export` / `scout_import`，含可回放事件流 `events.jsonl` 与导入后决策重算）；v0.3 已落地可配置存储（`scoutDir` / `autoPersist` 插件配置）与面试问题生成（`scout_questions`）；v0.4 已落地信息采集登记（`scout_ingest`：批量登记采集结果并按 URL 自动推断来源类型与证据等级）；v0.5 已落地公司/岗位对比（`scout_compare`：2–5 案例并排对比报告与合并面试问题）；v0.6 已落地采集→主张流转（`scout_ingest` 支持 claim 草稿，登记来源同时自动添加主张）；v0.7 已落地 Provider 深度集成（`scout_search`：接入 DSH Web Provider，搜索结果自动登记为来源）；v0.8.x 完成 npm 首发与 DSH 0.2 rc 通道对齐（`exports` 映射、Schemastery `Config` 声明、profile smoke 门禁）；v0.9.0 适配 DSH 0.2 运行时，并建立四个精确版本的兼容矩阵与夜间兼容检查。
 
-**v0.9.1（当前版本）**把插件从「能跑」推到「在真实 DSH 里表现正确、便宜、可解释」，主题是接缝而不是新功能：
+**v0.9.1** 把插件从「能跑」推到「在真实 DSH 里表现正确、便宜、可解释」，主题是接缝而不是新功能：
 
-- **输出契约**：变更类工具不再回吐整份 case JSON，改为「结构化对象 `value` + <1KB 紧凑 render」；全量数据仍由 `scout_report` / `scout_export` 提供。
+- **输出契约**：变更类工具不再回吐整份 case JSON，改为「结构化对象 `value` + 整串（含省略号）不超过 1 KB 的紧凑 render」；全量数据仍由 `scout_report` / `scout_export` 提供。
 - **落盘可信度**：`autoPersist` 失败可见化（返回值 `persist.persisted=false` + `persist.error`）；导出统一为「先记事件、后写文件」；导出目录写 `export.complete.json` 完成标记（**先置 `complete:false`、五文件写完再置 `complete:true`**）；`scout_import` 读标记的 `complete` 字段，缺失或不完整时报告 `complete: false`；写盘转发 `exec.signal`。
-- **服务绑定与路径**：`fs` / `web` 改为调用时解析（不再在 `apply()` 时快照）；导出返回解析后的绝对路径；缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才从 `<scoutDir>/<caseId>/` 惰性回填并记 `case_rehydrated`（0.9.0 旧导出无完成标记，需显式 `scout_import`）。
-- **可解释与双语**：新增 `language: 'zh-CN' | 'en'`（默认 `zh-CN`）；报告新增 `## Coverage` 调查覆盖度区块。
+- **服务绑定与路径**：`fs` / `web` 改为调用时解析（不再在 `apply()` 时快照）；导出返回解析后的绝对路径；缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才从 `<scoutDir>/<caseId>/` 惰性回填并记 `case_rehydrated`（0.9.0 旧导出无完成标记，需显式 `scout_import`）。案例对齐只在 `decide` 路径生效（重算决策的工具调用与缓存未命中时的惰性回填经过它；回填由第一个访问该 case 的工具调用触发，所以冷启动后即使只调 `scout_report` 也可能带上一次对齐）；**直接读磁盘 `case.json`、从不经过插件的第三方工具看不到对齐**。
+- **可解释与双语**：新增 `language: 'zh-CN' | 'en'`（默认 `zh-CN`），未编辑的出厂默认文案会自动对齐到部署语言——精选面试问题按**下标逐条**判定（长度与出厂数组相同时逐条替换，用户改过的那条保持原样；长度不同则整组原样保留），`decisionObjective` / `role.fitQuestion` 逐字段判定；报告新增 `## Coverage` 调查覆盖度区块。
 - **显式入口**：新增 `/scout` 命令（`status` / `questions` / `report` / `export` 四个子动作）与插件注册的 `scout` Skill。
 - **分发契约**：`engines.dsh`、`dsh.manifestVersion: 1`、`locale/en.json` + `locale/zh.json`（必须写进 `exports`，否则被静默忽略）、包内 `icon`。
 
-0.9.1 明确不做的事见 [CHANGELOG](../CHANGELOG.md)：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分与排名。
+0.9.1 明确不做的事见 [CHANGELOG](../CHANGELOG.md)：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分与排名（0.9.2 沿用同一非目标）。
+
+**v0.9.2（当前版本）**是收口版本：把 0.9.1 验证报告点名的最大盲区（U11）补成真实宿主门禁，并清掉三轮独立验证留下的文档税。本版本**不新增工具、不新增命令、不新增 Skill 条目**：
+
+- **F2 · 真实宿主端到端门禁（关闭 U11）**：`scripts/profile-smoke.mjs` 扩展为六步真实宿主场景链——创建 → 导出 → 冷重启 → 惰性回填 → 跨语言导入 → 卸载，另加完成标记「缺失 / `complete:false`」两条负向对照；四版本矩阵在扩展后的门禁下 4/4 通过。**仍未覆盖**：真实 LLM / agent loop 与 approval 策略、相对路径、`autoPersist`、真实进程中断，以及其余 6 个工具（仅断言注册）。
+- **F1 · 面试问题按下标逐条对齐（关闭 D10）**：精选面试问题由「整组 all-or-nothing」改为按下标逐条——长度与出厂数组相同时逐条替换，用户改过的那条保持原样；长度不同则整组原样保留。默认行为对**未编辑**场景零变化。
+- **F5 · render 整串上限加固（关闭 O10）**：整串（含省略号）不超过 1024 B，裁切预算由省略号自身的 UTF-8 长度推导（不再依赖手写余量）。
+- **F4 · 依赖对齐**：`@deepseek-ai/schemastery` 由 `^3.18.2` 改为 `~3.18.4`，与宿主系列一致；`peerDependencies` 与 `engines.dsh` 范围不变。
+- **已知边界 G1（有意不修，推迟 0.10.0）**：冷启动惰性回填会把决策理由措辞由初始文案换成 `decisionReasons.identity`（并补 `decisionReasonCode`），`decision` 不变；详见 [0.9.2 门禁发现](dsh-scout-0.9.2-gate-findings.md)（仓库文档，不在 npm 包内）。
 
 ## 1. 产品承诺
 
@@ -59,6 +67,8 @@ scout-cases/<case-id>/
 
 标记里的 `eventCount` **只有在 `complete: true` 时才与磁盘上 `events.jsonl` 的行数一致**：导出中断时，它记录的是那次失败尝试**期望**的事件数，可能与实际行数不同。读取方请以 `complete` 为准，不要只看 `eventCount`。
 
+标记里的 `files` 只列**五个数据文件**；`scout_export` 返回值里的 `files` 是这次调用写出的**六个名字**（五个数据文件 + 标记自身）。同名不同义，两者都正确。
+
 `scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」：标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报告 `complete: false`，让调用方自己决定是否信任这份快照。也就是说：中断的导出只要五个数据文件都在，仍可导入，但会被如实标为不完整；五个数据文件缺任何一个（例如在写 `claims.json` 时中断的全新导出）仍是硬失败。
 
 首版不要求精确的总分。报告必须包含：
@@ -91,7 +101,7 @@ scout-cases/<case-id>/
 
 - 工具：启动 case、核验 claim、比较公司、生成面试问题、导出报告。
 - 事件观察：记录工具结果和来源归档，不重写 Agent Loop。插件自己的 `events.jsonl` 事件只存在于导出文件里，**不写进 session log**（理由见 §5.1）。
-- 配置：来源目录、报告目录和输出语言必须是可配置字段。`scoutDir` / `autoPersist` 已在 v0.3 落地，`language`（`'zh-CN' | 'en'`，默认 `'zh-CN'`）在 0.9.1 落地。**并发数与超时 0.9.1 明确不做**：DSH 工具默认串行（未声明 `isConcurrencySafe` 即 exclusive），插件这一层没有可并发的调度面；超时按需在 0.10.0 引入。契约里的字段要么实现、要么写明为什么不做，不留未解释的占位。
+- 配置：来源目录、报告目录和输出语言必须是可配置字段。`scoutDir` / `autoPersist` 已在 v0.3 落地，`language`（`'zh-CN' | 'en'`，默认 `'zh-CN'`）在 0.9.1 落地——`case.json` 里的 `language` 是**本部署的渲染语言**，不是文件内容的语言：对齐只按这个标签判定，不校验标签与内容是否自洽，手工改写的外来文件不做校正。**并发数与超时 0.9.1 明确不做**：DSH 工具默认串行（未声明 `isConcurrencySafe` 即 exclusive），插件这一层没有可并发的调度面；超时按需在 0.10.0 引入。契约里的字段要么实现、要么写明为什么不做，不留未解释的占位。
 - 生命周期：所有 watcher、后台任务、连接和临时文件都必须在卸载时清理。
 
 ### 5.1 撤回「自造 session event」计划（红线）

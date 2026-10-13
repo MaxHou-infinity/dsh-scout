@@ -34,7 +34,12 @@ const localeDir = join(packageRoot, 'locale')
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 
 const PACKAGE_NAME = 'dsh-scout'
-const RELEASE_VERSION = '0.9.1'
+/**
+ * Release checklist anchor: this literal is asserted against `package.json`,
+ * so it must be bumped by hand with every release. Do not read it back from the
+ * manifest - a tautological assertion would stop catching a forgotten bump.
+ */
+const RELEASE_VERSION = '0.9.2'
 const DSH_RANGE = '>=0.1.0-rc.6 <0.3.0-0'
 const NODE_RANGE = '>=22.19.0'
 const MAX_ICON_BYTES = 256 * 1024
@@ -51,7 +56,7 @@ const localeEntries = (name) => `./locale/${name}`
 
 const slug = (value) => value.replace(/^\.\//, '').replace(/\/+$/, '')
 
-test('publishes the 0.9.1 package identity', () => {
+test(`publishes the ${RELEASE_VERSION} package identity`, () => {
   assert.equal(manifest.name, PACKAGE_NAME)
   assert.equal(manifest.version, RELEASE_VERSION)
   assert.equal(manifest.type, 'module')
@@ -78,7 +83,18 @@ test('keeps the declared DSH range aligned with the range DSH enforces', () => {
   // so the tool peer is what actually enables or disables this plugin.
   assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-tools'], DSH_RANGE)
   assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '>=4.0.2 <5')
-  assert.equal(manifest.dependencies['@deepseek-ai/schemastery'], '^3.18.2')
+  // The validator is a runtime dependency, so it is pinned to the same minor
+  // line the DSH host series itself resolves (`~3.18.4`). A caret range would
+  // admit 3.19.x and let the plugin validate Config objects with a different
+  // build than the host that hands them over. Config identity survives that
+  // (recognition goes through the global `Symbol.for('schemastery')`), so the
+  // damage would be silent behavioural drift rather than a type error - which
+  // is exactly why the range is asserted here instead of left to review.
+  assert.equal(manifest.dependencies['@deepseek-ai/schemastery'], '~3.18.4')
+  assert.ok(
+    manifest.dependencies['@deepseek-ai/schemastery'].startsWith('~'),
+    'the schemastery range must stay minor-locked to the host series, not float on a caret',
+  )
 })
 
 test('keeps dsh.manifestVersion alongside the existing bundle patch', () => {

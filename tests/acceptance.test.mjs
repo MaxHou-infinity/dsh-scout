@@ -25,9 +25,10 @@
  *   8. `language: 'en'` end to end (including the persisted `report.md`) and the
  *      unchanged `zh-CN` byte shape.
  *
- * Round 1 of this suite pinned six defects as *characterization* tests. All six
- * were fixed and are now asserted as the positive contract; the names say which
- * defect each one guards:
+ * Round 1 of this suite pinned six defects as *characterization* tests; round 2
+ * pinned a seventh as a *documented boundary* (`D10`). All seven were fixed and
+ * are now asserted as the positive contract; the names say which defect each one
+ * guards:
  *
  *   - G1 (lazy rehydration ignored the completion marker)   → marker is now required
  *   - G2 (the 1 KB render budget was not enforced)          → per-field + whole-render caps
@@ -35,14 +36,12 @@
  *   - D1 (persisted report.md followed the case language)   → export follows the render language
  *   - D7 (ingest drafts hard-coded Chinese notes)           → both strings moved into i18n
  *   - D8 (stored factory prose kept the creation language)  → untouched defaults align
+ *   - D10 (a partially edited question set froze its untouched factory entries)
+ *                                                           → questions align entry by entry
  *
- * One test remains a *documented boundary* rather than a positive contract:
- * `D10 (documented boundary)`, where a partially edited `interviewQuestions`
- * array is preserved as a whole, so its untouched factory entries keep the
- * creation language. That is a deliberate trade-off (the code cannot tell which
- * entry the user edited), not a regression; it constrains how the multilingual
- * behaviour may be described, and the verification report says so. No real
- * assertion is relaxed anywhere in this file.
+ * No test in this file asserts that a defect exists; §10b carries the seven-row
+ * behaviour matrix for the entry-by-entry rule. No real assertion is relaxed
+ * anywhere in this file.
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -85,6 +84,7 @@ const EXPORT_MARKER_FILE = 'export.complete.json'
 /** Model-facing byte budget the README states for a compact render. */
 const RENDER_BUDGET_BYTES = 1024
 const CJK = /[\u4e00-\u9fff]/
+const countCjk = text => (text.match(/[\u4e00-\u9fff]/gu) ?? []).length
 
 const execFor = (sessionId = 'verifier', cwd = '/session/cwd') => ({
   agent: { id: sessionId, session: { header: { cwd } } },
@@ -476,6 +476,50 @@ test('the 1 KB render budget holds even against adversarial caller-supplied text
     renderText(syntheticBlocks).endsWith('…'),
     'the whole-render cap must clip rather than silently drop trailing lines',
   )
+
+  // F5: the clip budget is derived from the ellipsis it appends, so the clipped
+  // result — ellipsis included — lands *on* the budget rather than some magic
+  // number of bytes short of it. An ASCII-only envelope of the same shape is
+  // therefore exactly one budget wide, whichever way the clip falls.
+  const asciiSynthetic = {
+    ok: true,
+    caseId: 'A'.repeat(80),
+    decision: 'VERIFY',
+    identity: 'needs_verification',
+    counts: { sources: 1, claims: 4, verified: 0, open: 4 },
+    changed: { kind: 'case_imported', ids: ['B'.repeat(200)] },
+    nextActions: Array.from({ length: 6 }, () => 'C'.repeat(140)),
+    sourceDir: '/D'.repeat(160),
+    complete: false,
+  }
+  const asciiSyntheticBytes = renderBytes(renderBlocks(harness, 'scout_import', asciiSynthetic))
+  assert.equal(
+    asciiSyntheticBytes,
+    RENDER_BUDGET_BYTES,
+    'an ASCII clip must fill the whole budget, ellipsis bytes included',
+  )
+  assert.ok(renderText(renderBlocks(harness, 'scout_import', asciiSynthetic)).endsWith('…'))
+
+  // Emoji are four UTF-8 bytes carried by a surrogate pair, and the per-field
+  // clip slices UTF-16 code units, so it can stop between the halves of a pair.
+  // Every one of those renders must still fit the budget.
+  for (const copies of [2, 3, 4, 5, 6, 7]) {
+    const emojiEnvelope = {
+      ...asciiSynthetic,
+      caseId: '🙂'.repeat(120),
+      changed: { kind: 'case_imported', ids: ['🚀'.repeat(120)] },
+      nextActions: Array.from({ length: copies }, () => '🧭'.repeat(300)),
+      sourceDir: `/🌍${'🙂'.repeat(200)}`,
+    }
+    const blocks = renderBlocks(harness, 'scout_import', emojiEnvelope)
+    const bytes = renderBytes(blocks)
+    assert.ok(bytes <= RENDER_BUDGET_BYTES, `${copies} emoji actions rendered ${bytes} bytes`)
+    assert.ok(renderText(blocks).endsWith('…'), `${copies} emoji actions must be clipped, not dropped`)
+    assert.ok(
+      bytes > RENDER_BUDGET_BYTES - 4,
+      `${copies} emoji actions rendered ${bytes} bytes: the clip must use the budget it has`,
+    )
+  }
 })
 
 /* ------------------------------------------------------------------ *
@@ -1377,44 +1421,217 @@ test('user-edited case prose survives a language change while untouched fields s
   assert.notDeepEqual(questionsEdited.caseJson.interviewQuestions, enFactory.interviewQuestions)
 })
 
-test('D10 (documented boundary): a partially edited question set keeps its untouched factory entries', async () => {
-  // Characterization of the deliberate all-or-nothing rule for the curated
-  // question array: `alignCaseDefaults` only swaps the whole array when every
-  // entry still equals the creation-language factory default, because it cannot
-  // tell which entry the user edited. Editing one question therefore freezes the
-  // remaining factory entries in the creation language, and an `en` deployment
-  // renders a mixed-language list. `decisionObjective` and `role.fitQuestion` are
-  // decided per field, so they still align (asserted below).
-  //
-  // This is a boundary, not data loss: the user's text is preserved exactly. It
-  // does mean "a cross-language import is single-language" holds only while the
-  // curated set is untouched, which is why the delivery sentence must say
-  // "未编辑的出厂默认" rather than "案例自带文案".
-  const enFactory = scoutStrings('en').defaults
-  const fs = new MemoryFs()
-  const zh = createHarness({ scoutDir: '/p', services: { fs } })
+/* ------------------------------------------------------------------ *
+ * 10b. F1 — curated questions align entry by entry (D10, closed)
+ *
+ * Round 2 replaced the all-or-nothing rule with an index-wise one: when the
+ * curated set still has the factory length, every entry that equals its factory
+ * slot is aligned while an edited entry is kept verbatim; a set of a different
+ * length is preserved as a whole. All seven rows of the behaviour matrix are
+ * asserted below as the positive contract — no test here pins a defect.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Factory defaults per language. Every assertion in this section reads the
+ * shipped i18n table, so wording changes in `src/i18n.ts` can never make a test
+ * pass or fail for the wrong reason.
+ */
+const FACTORY = {
+  'zh-CN': scoutStrings('zh-CN').defaults,
+  en: scoutStrings('en').defaults,
+}
+
+/** `scout_import` recomputes the decision on the way in; no other key may move. */
+const IMPORT_RECOMPUTED_KEYS = ['decision', 'decisionReason', 'decisionReasonCode']
+
+const withoutRecomputed = caseJson => Object.fromEntries(
+  Object.entries(caseJson).filter(([key]) => !IMPORT_RECOMPUTED_KEYS.includes(key)),
+)
+
+/**
+ * Drive one case across a language boundary: create it in `from`, optionally
+ * edit the exported `case.json`, then import that export into a deployment
+ * rendering `to`. Returns the case.json that was imported, the case.json the
+ * target deployment re-exported, and the report it rendered.
+ */
+async function crossLanguageImport({ caseId, from, to, edit, fs = new MemoryFs() }) {
   const exec = execFor()
-  await call(zh, 'scout_start', { caseId: 'partial', companyName: 'Partial Co', roleTitle: 'HR Head', location: '' }, exec)
-  await call(zh, 'scout_export', { caseId: 'partial', targetDir: '/p/partial' }, exec)
-  const edited = JSON.parse(fs.read('/p/partial/case.json'))
-  edited.interviewQuestions = ['My own custom question?', ...edited.interviewQuestions.slice(1)]
-  fs.files.set('/p/partial/case.json', `${JSON.stringify(edited, null, 2)}\n`)
+  const sourceDir = `/matrix/${caseId}/from`
+  const targetDir = `/matrix/${caseId}/to`
+  const scoutDir = `/matrix/${caseId}`
+  const writer = createHarness({ config: { language: from, scoutDir }, services: { fs } })
+  await call(writer, 'scout_start', { caseId, companyName: 'Matrix Co', roleTitle: 'HR Head', location: '' }, exec)
+  await call(writer, 'scout_export', { caseId, targetDir: sourceDir }, exec)
+  const imported = JSON.parse(fs.read(`${sourceDir}/case.json`))
+  if (edit) {
+    edit(imported)
+    fs.files.set(`${sourceDir}/case.json`, `${JSON.stringify(imported, null, 2)}\n`)
+  }
+  const reader = createHarness({ config: { language: to, scoutDir }, services: { fs } })
+  await call(reader, 'scout_import', { caseId, sourceDir }, exec)
+  const report = await call(reader, 'scout_report', { caseId }, exec)
+  await call(reader, 'scout_export', { caseId, targetDir }, exec)
+  return { imported, exported: JSON.parse(fs.read(`${targetDir}/case.json`)), report: report.report, fs }
+}
 
-  const en = createHarness({ config: { language: 'en', scoutDir: '/p2' }, services: { fs } })
-  await call(en, 'scout_import', { caseId: 'partial', sourceDir: '/p/partial' }, exec)
-  const report = await call(en, 'scout_report', { caseId: 'partial' }, exec)
-  const questions = await call(en, 'scout_questions', { caseId: 'partial' }, exec)
-  await call(en, 'scout_export', { caseId: 'partial', targetDir: '/p/partial-en' }, exec)
-  const caseJson = JSON.parse(fs.read('/p/partial-en/case.json'))
+test('F1 matrix 1/7 · an untouched factory question set aligns as a whole in an en deployment', async () => {
+  const moved = await crossLanguageImport({ caseId: 'm1', from: 'zh-CN', to: 'en' })
+  assert.deepEqual(
+    moved.imported.interviewQuestions,
+    FACTORY['zh-CN'].interviewQuestions,
+    'the source really carried the untouched zh factory set',
+  )
+  assert.deepEqual(moved.exported.interviewQuestions, FACTORY.en.interviewQuestions)
+  assert.equal(moved.exported.language, 'en')
+  assert.equal(countCjk(moved.report), 0, 'an aligned en report carries no CJK at all')
+})
 
-  assert.equal(caseJson.interviewQuestions[0], 'My own custom question?', 'the edited entry is preserved')
-  assert.equal(CJK.test(caseJson.interviewQuestions.slice(1).join('')), true, 'the untouched entries keep the creation language')
-  assert.equal(CJK.test(report.report), true, 'so an en report is not fully single-language in this case')
-  const chineseQuestions = questions.questions.filter(question => CJK.test(question))
-  assert.equal(chineseQuestions.length, 4, 'four factory questions stay Chinese; the edited one is the user’s')
-  // The per-field rule still applies to the other two prose fields.
-  assert.equal(caseJson.decisionObjective, enFactory.decisionObjective)
-  assert.equal(caseJson.role.fitQuestion, enFactory.fitQuestion)
+test('F1 matrix 2/7 · D10 (closed): one edited entry is kept, the rest align, and the en report CJK equals that entry', async () => {
+  const userQuestion = '我自己写的第三个问题？'
+  const moved = await crossLanguageImport({
+    caseId: 'm2',
+    from: 'zh-CN',
+    to: 'en',
+    edit: caseJson => { caseJson.interviewQuestions[2] = userQuestion },
+  })
+  assert.equal(moved.exported.interviewQuestions[2], userQuestion, 'the edited entry is preserved verbatim')
+  assert.deepEqual(
+    moved.exported.interviewQuestions,
+    FACTORY.en.interviewQuestions.map((question, index) => (index === 2 ? userQuestion : question)),
+    'every untouched entry aligns to this deployment’s factory default',
+  )
+  assert.ok(moved.report.includes(userQuestion), 'the report renders the user’s own question')
+  assert.ok(countCjk(userQuestion) > 0, 'the count assertion below is only meaningful if the user wrote CJK')
+  assert.equal(
+    countCjk(moved.report),
+    countCjk(userQuestion),
+    'the only CJK left in the en report is the user’s own question, not four frozen factory entries',
+  )
+})
+
+test('F1 matrix 3/7 · a question set of a different length is preserved as a whole', async () => {
+  const custom = ['自定义问题一？', '自定义问题二？', '自定义问题三？']
+  const moved = await crossLanguageImport({
+    caseId: 'm3',
+    from: 'zh-CN',
+    to: 'en',
+    edit: caseJson => { caseJson.interviewQuestions = custom },
+  })
+  assert.equal(custom.length === FACTORY['zh-CN'].interviewQuestions.length, false, 'this row needs a different length')
+  assert.deepEqual(moved.exported.interviewQuestions, custom)
+  assert.ok(moved.report.includes(custom[0]), 'the report renders them as authored')
+  assert.equal(
+    moved.report.includes(FACTORY.en.interviewQuestions[0]),
+    false,
+    'no factory entry may be injected into a differently sized set',
+  )
+  assert.equal(
+    countCjk(moved.report),
+    custom.reduce((total, question) => total + countCjk(question), 0),
+    'a differently sized set is kept whole, so its CJK is exactly what the user wrote',
+  )
+})
+
+test('F1 matrix 4/7 · a same-length set with no factory entry left is equivalent to a whole-set replacement', async () => {
+  const custom = ['A1?', 'A2?', 'A3?', 'A4?', 'A5?']
+  const moved = await crossLanguageImport({
+    caseId: 'm4',
+    from: 'zh-CN',
+    to: 'en',
+    edit: caseJson => { caseJson.interviewQuestions = custom },
+  })
+  assert.equal(
+    custom.length,
+    FACTORY['zh-CN'].interviewQuestions.length,
+    'the set has the factory length, so the entry-by-entry branch runs',
+  )
+  assert.deepEqual(moved.exported.interviewQuestions, custom, 'no entry matches its slot, so nothing is swapped')
+  for (const question of custom) {
+    assert.ok(moved.report.includes(`- ${question}`), `the report must render the user’s ${question}`)
+  }
+  assert.equal(
+    FACTORY.en.interviewQuestions.some(question => moved.report.includes(question)),
+    false,
+    'no factory entry may be reintroduced into a fully custom set',
+  )
+})
+
+test('F1 matrix 5/7 · the rule is symmetric: an en case aligns entry by entry into zh-CN', async () => {
+  const whole = await crossLanguageImport({ caseId: 'm5a', from: 'en', to: 'zh-CN' })
+  assert.deepEqual(whole.imported.interviewQuestions, FACTORY.en.interviewQuestions)
+  assert.deepEqual(whole.exported.interviewQuestions, FACTORY['zh-CN'].interviewQuestions)
+  assert.equal(whole.exported.language, 'zh-CN')
+
+  const userQuestion = 'My own third question?'
+  const partial = await crossLanguageImport({
+    caseId: 'm5b',
+    from: 'en',
+    to: 'zh-CN',
+    edit: caseJson => { caseJson.interviewQuestions[2] = userQuestion },
+  })
+  assert.deepEqual(
+    partial.exported.interviewQuestions,
+    FACTORY['zh-CN'].interviewQuestions.map((question, index) => (index === 2 ? userQuestion : question)),
+    'the mirror image of row 2 holds with en as the source language',
+  )
+})
+
+test('F1 matrix 6/7 · a zh → en → zh round trip restores every factory entry', async () => {
+  const exec = execFor()
+  const hop = async (fs, language, caseId, sourceDir, targetDir) => {
+    const harness = createHarness({ config: { language, scoutDir: `/round/${caseId}` }, services: { fs } })
+    if (sourceDir) {
+      await call(harness, 'scout_import', { caseId, sourceDir }, exec)
+    } else {
+      await call(harness, 'scout_start', { caseId, companyName: 'Round Trip Co', roleTitle: 'HR Head', location: '' }, exec)
+    }
+    await call(harness, 'scout_export', { caseId, targetDir }, exec)
+    return JSON.parse(fs.read(`${targetDir}/case.json`))
+  }
+
+  const fs = new MemoryFs()
+  await hop(fs, 'zh-CN', 'm6', null, '/round/m6/1')
+  const middle = await hop(fs, 'en', 'm6', '/round/m6/1', '/round/m6/2')
+  assert.equal(middle.language, 'en')
+  assert.deepEqual(middle.interviewQuestions, FACTORY.en.interviewQuestions)
+  const restored = await hop(fs, 'zh-CN', 'm6', '/round/m6/2', '/round/m6/3')
+  assert.equal(restored.language, 'zh-CN')
+  assert.deepEqual(restored.interviewQuestions, FACTORY['zh-CN'].interviewQuestions)
+
+  // The same trip with one entry edited: that entry survives both hops while
+  // every other entry comes home to the zh factory value, slot by slot.
+  const fs2 = new MemoryFs()
+  const userQuestion = '只有这一条是用户改的？'
+  await hop(fs2, 'zh-CN', 'm6b', null, '/round/m6b/1')
+  const seeded = JSON.parse(fs2.read('/round/m6b/1/case.json'))
+  seeded.interviewQuestions[2] = userQuestion
+  fs2.files.set('/round/m6b/1/case.json', `${JSON.stringify(seeded, null, 2)}\n`)
+  const middleB = await hop(fs2, 'en', 'm6b', '/round/m6b/1', '/round/m6b/2')
+  assert.equal(middleB.interviewQuestions[2], userQuestion)
+  assert.deepEqual(middleB.interviewQuestions.slice(0, 2), FACTORY.en.interviewQuestions.slice(0, 2))
+  assert.deepEqual(middleB.interviewQuestions.slice(3), FACTORY.en.interviewQuestions.slice(3))
+  const restoredB = await hop(fs2, 'zh-CN', 'm6b', '/round/m6b/2', '/round/m6b/3')
+  assert.equal(restoredB.interviewQuestions[2], userQuestion, 'the user’s edit outlives both hops')
+  assert.deepEqual(
+    restoredB.interviewQuestions.filter((_, index) => index !== 2),
+    FACTORY['zh-CN'].interviewQuestions.filter((_, index) => index !== 2),
+    'and every other slot returns to the zh factory value',
+  )
+})
+
+test('F1 matrix 7/7 · importing a case into its own language rewrites no case-authored field', async () => {
+  const moved = await crossLanguageImport({ caseId: 'm7', from: 'zh-CN', to: 'zh-CN' })
+  assert.equal(moved.imported.language, 'zh-CN')
+  assert.deepEqual(
+    withoutRecomputed(moved.exported),
+    withoutRecomputed(moved.imported),
+    'apart from the decision scout_import recomputes, case.json is field-for-field unchanged',
+  )
+  for (const field of ['language', 'title', 'decisionObjective', 'subject', 'role', 'interviewQuestions']) {
+    assert.deepEqual(moved.exported[field], moved.imported[field], `${field} must survive a same-language import verbatim`)
+  }
+  assert.deepEqual(moved.exported.interviewQuestions, FACTORY['zh-CN'].interviewQuestions)
+  assert.equal(moved.exported.decision, moved.imported.decision, 'the recomputed decision agrees with the imported one')
 })
 
 /* ------------------------------------------------------------------ *

@@ -4,6 +4,34 @@
 
 本文件从 0.9.1 开始记录；0.9.0 及更早版本的变更见仓库的 git tag。
 
+## [0.9.2] - 2026-10-13
+
+0.9.2 是 0.9.1 的收口版本：把 0.9.1 验证报告点名的最大盲区（**U11**）补成真实宿主门禁，清掉三轮独立验证留下的文档税，并关闭 0.9.1 的两个已知边界（**D10**、**O10**）。
+
+### Added
+
+- **真实宿主端到端门禁（关闭 U11）**：`scripts/profile-smoke.mjs` 从「单进程、两个工具调用」扩展为**六步场景链**，在最多六个真实宿主进程里依次跑：创建（`scout_start` + `scout_add_source` + `scout_add_claim`）→ 导出（绝对 `targetDir`、6 个文件、完成标记 `complete: true`）→ 冷重启（同一 `DSH_HOME`/profile 的第二个进程）→ 惰性回填（不 `scout_import`，断言决策不变并落 `case_rehydrated`）→ 跨语言导入（`en` profile 导入 zh 导出，报告与 `report.md` 的 CJK = 0）→ 卸载（无 registry 残留）。另加两条**完成标记负向对照**：删掉 `export.complete.json`、把标记改成 `complete: false`，两者都必须拒绝回填——证明第 4 步真的在读标记，而不是恰好命中别的东西。全量约 16 秒（M 系列 Mac、pnpm store 已热），可用 `DSH_SCOUT_SMOKE_SKIP_CROSS_LANGUAGE` / `DSH_SCOUT_SMOKE_SKIP_REHYDRATION_CONTROL` 走 PR 快速路径，跳过会在 PASS 行如实报为**覆盖降级**、不静默。**四版本矩阵在扩展后的门禁下 4/4 通过**（`0.1.0-rc.6` / `0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2`）；「已覆盖 / 仍未覆盖」两栏写在脚本头部注释里（仍未覆盖：真实 LLM / agent loop 与 approval 策略、相对路径、`autoPersist`、真实进程中断、其余 6 个工具仅断言注册）。
+
+### Changed
+
+- **精选面试问题改为按下标逐条对齐**（关闭 0.9.1 的「整组 all-or-nothing」边界，即 D10）：长度与出厂数组相同时，逐个下标比较——该下标仍是出厂默认的条目替换为本部署语言的同下标默认值，**用户改过的那条保持原样**；长度与出厂数组不同时，整组视为用户自撰、原样保留。判定依据是「是否等于该下标的出厂默认」，不是编辑历史：把某条改回出厂原文，那条会被对齐。**默认行为对未编辑场景零变化**——整组未被编辑时，对齐结果与 0.9.1 逐条相同；`zh-CN` 部署对既有 case 仍是 no-op（`case.json` 的 `decisionObjective` / `interviewQuestions` / `role.fitQuestion` 三个字段逐字段不变）。
+- **`@deepseek-ai/schemastery` 由 `^3.18.2` 对齐到 `~3.18.4`**：宿主系列锁 `~3.18.4`，而 `^` 允许解析到 `3.19.x`，存在静默行为漂移；`Config` 的身份识别走全局符号，跨版本不会认错，这次只是把版本面收齐。`peerDependencies` 与 `engines.dsh` 范围**没有变化**。
+
+### Fixed
+
+- **render 整串上限改为由省略号长度推导**（原 O10）：0.9.1 的裁切预算是固定余量 `MAX_RENDER_BYTES - 8`，再追加 3 B 省略号，含省略号的实际上界约 1019 B（实测最坏 1018 B），距 1024 B 预算只剩约 5 B 余量——把余量改到 3 以内就会越界。现在省略号自身的 UTF-8 长度先从预算里扣掉、再按码元裁切，整串（含省略号）**不超过 1024 B**；对抗性测试把 ASCII 输入推到整整 1024 B，并对 CJK 与 emoji（代理对、UTF-8 变长）断言不超过预算。
+
+### Docs
+
+- **`case.json.language` 的语义**：它是**本部署的渲染语言**，不是文件内容的语言；手工改写的外来文件不做自洽性校正。
+- **`alignCaseDefaults` 的生效范围**：只在 `decide` 路径生效——重算决策的工具调用与缓存未命中时的惰性回填经过它（回填由**第一个访问该 case 的工具调用**触发，所以冷启动后即使只调 `scout_report` 也可能带上一次对齐），只创建案例的 `scout_start` 不经过；直接读磁盘 `case.json`、从不经过插件的第三方工具看不到对齐。
+- **导出标记的两处细节**：`eventCount` 在导出中断时描述的是**失败的那次尝试**期望的事件数，与磁盘 `events.jsonl` 行数可能不同，读取方以 `complete` 为准；标记里的 `files` 只列 **5 个数据文件**，而 `scout_export` 返回值里的 `files` 是 **6 个名字**（五个数据文件 + 标记自身）——同名不同义，两者都正确。
+- **新增门禁发现记录**：`docs/dsh-scout-0.9.2-gate-findings.md` 记录 F2 暴露的 G1（见下），并附最小复现脚本 `scripts/repro-decision-reason-drift.mjs`——两者都是仓库内文档 / 诊断件，**不在 npm 包内**，也不进测试套件。
+
+### Known boundaries
+
+- **G1 · 冷启动回填会重写决策理由的措辞（0.9.2 有意不修，推迟 0.10.0）**：对「`scout_start` 之后从未发生会重算决策的调用」就导出、冷启动（或 `scout_import`）的案例，回填路径会重跑决策，把 `decisionReason` 由初始文案 `defaults.initialDecisionReason` 换成 `decisionReasons.identity`，并补上 `decisionReasonCode`；**`decision`（`VERIFY`）不变**，证据账本 / 覆盖率 / 面试问题 / `caseId` 都不受影响。触发窗口比「一次写操作都没有」略大：会重算决策的是 `scout_add_claim` / `scout_ingest` / `scout_search` / `scout_verify_identity` / `scout_verify_claim` / `scout_import`；只登记来源的 `scout_add_source` 在同一进程内不重算决策，但冷启动后第一次访问该 case 的工具调用（含 `scout_report` / `scout_add_source`）会先走惰性回填 → `decide`，所以「创建后只登记过来源、然后导出并重启」的案例同样会看到措辞变化。0.9.2 不修的两个理由：正确修法会改动 0.9.0/0.9.1 冻结的全新案例首屏文案基线；且把「重启前后理由必须一致」写成断言会违反本项目「测试套件里断言缺陷存在的用例数为 0」的硬规矩。复现步骤、代码路径与 0.10.0 的候选修法见 [0.9.2 门禁发现](docs/dsh-scout-0.9.2-gate-findings.md)。
+
 ## [0.9.1] - 2026-10-12
 
 0.9.1 是本地迭代版本（不发 npm、不推远端、不打 tag）。主题不是加功能，而是把 0.9.0 已经写好的能力接到 DSH 正确的接缝上：**插件在真实 DSH 里要表现正确、便宜、可解释**。
@@ -12,9 +40,9 @@
 
 - **`/scout` 命令**：注册 `ctx.commands.register({ name: 'scout', … })`，提供 `status` / `questions` / `report` / `export` 四个子动作（用法：`/scout status <caseId> | /scout questions <caseId> | /scout report <caseId> | /scout export <caseId> [targetDir]`）；宿主在处理前后自动落 `command/run` + `command/done` 事件（这两个名字都在宿主已知事件词表内，因此会话可重建）。
 - **`scout` Skill**：由插件直接注册（`ctx.skills.register`，不需要落文件、不需要 client bundle），内含标准尽调工作流（start → search/ingest → claim → verify_identity → report → questions）与四条证据纪律。插件卸载时条目随 disposer 消失。
-- **`language: 'zh-CN' | 'en'` 配置**（默认 `zh-CN`）：控制报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）的语言；它还会对齐案例自带、**仍是出厂默认**的文案，但判定粒度不同——`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐），精选面试问题是**整组 all-or-nothing**（整组逐项未被编辑才对齐；改过任意一条则整组保留创建语言，`en` 报告此时仍含约 79 个 CJK 字符）。**用户编辑过的文案保持原样**；与案例自带语言相同时是 no-op，默认值对既有用户零变化。
+- **`language: 'zh-CN' | 'en'` 配置**（默认 `zh-CN`）：控制报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）的语言；它还会对齐案例自带、**仍是出厂默认**的文案，但判定粒度不同——`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐），精选面试问题在 0.9.1 是**整组 all-or-nothing**（整组逐项未被编辑才对齐；改过任意一条则整组保留创建语言，`en` 报告此时仍含约 79 个 CJK 字符），**0.9.2 起改为按下标逐条**：长度与出厂数组相同时逐条替换，用户改过的那条保持原样，长度不同则整组原样保留（见 `[0.9.2]`）。**用户编辑过的文案保持原样**；与案例自带语言相同时是 no-op，默认值对既有用户零变化。
 - **报告新增 `## Coverage` 调查覆盖度区块**：对全部 11 个调查维度给出「已核验 / 待核验 / 未调查」计数，并单列未调查维度；`scout_questions` 会优先为未调查维度生成问题。
-- **导出完成标记 `export.complete.json`**：内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`；写入时**先置 `complete: false`，五个数据文件全部落盘后再改写为 `complete: true`**——所以陈旧标记不会为半份导出宣称完整（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。**`eventCount` 只有在 `complete: true` 时才与 `events.jsonl` 的行数一致**；导出中断时它记录的是那次失败尝试期望的事件数，请以 `complete` 为准。
+- **导出完成标记 `export.complete.json`**：内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`；写入时**先置 `complete: false`，五个数据文件全部落盘后再改写为 `complete: true`**——所以陈旧标记不会为半份导出宣称完整（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。**`eventCount` 只有在 `complete: true` 时才与 `events.jsonl` 的行数一致**；导出中断时它记录的是那次失败尝试期望的事件数，请以 `complete` 为准（读取方不要只比较 `eventCount`）。标记里的 `files` 只列**五个数据文件**，而 `scout_export` 返回值里的 `files` 是这次调用写出的**六个名字**（五个数据文件 + 标记自身）——同名不同义，两者都正确。
 - **惰性回填仅限完整导出**：缓存未命中时，只有当 `<scoutDir>/<caseId>/` 的完成标记为 `complete: true` 时才读回案例并追加 `case_rehydrated` 事件；**0.9.0 的旧导出没有完成标记，不会被自动回填**，需用 `scout_import` 显式恢复；错误信息会提示可用的 caseId / 建议 `scout_import`。
 - **分发契约字段**：`engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`）、`dsh.manifestVersion: 1`、`locale/en.json` + `locale/zh.json`（已写进 `exports`，否则会被 ESM resolver 静默忽略）、包内 `icon`。
 - **本 CHANGELOG**。
@@ -57,5 +85,7 @@
 
 刻意保留的行为边界（不是待修缺陷，但读文档的人需要知道）：
 
-- **精选面试问题整组对齐**：`alignCaseDefaults` 对精选面试问题采用 **all-or-nothing** 判定——整组逐项都仍是出厂默认时才对齐到部署语言；用户改过其中任意一条，整组保留创建语言（其余未编辑的条目也不会逐条转换），`en` 部署的报告此时仍含约 79 个 CJK 字符。这是有意保守（不猜用户意图）。**按条对齐（数组下标逐项替换）排在 0.9.2。**
+- **精选面试问题整组对齐**（0.9.1 的边界；0.9.2 起改为**按下标逐条**对齐，见 `[0.9.2]` Changed）：0.9.1 采用 **all-or-nothing** 判定——整组逐项都仍是出厂默认时才对齐到部署语言；用户改过其中任意一条，整组保留创建语言（其余未编辑的条目也不会逐条转换），`en` 部署的报告此时仍含约 79 个 CJK 字符。这是当时有意保守（不猜用户意图）。
 - **惰性回填只认完整导出**：只有完成标记 `complete: true` 的导出才会在缓存未命中时自动回填；0.9.0 的旧导出没有该标记，不会被自动恢复，需用 `scout_import` 显式导入。
+- **`case.json.language` 是渲染语言、不是内容语言**：案例对齐只按这个标签判定，**不校验标签与内容是否自洽**；手工把 `language` 改成与内容不符的值再导入时，插件会按「语言相同」提前返回、不做校正。正常导出 / 导入 / 升级路径不受影响（0.9.0 旧导出的 `language` 恒为 `zh-CN`，与其内容一致）。
+- **对齐只在 `decide` 路径生效**：它随决策重算运行（`scout_add_claim` / `scout_ingest` / `scout_search` / `scout_verify_identity` / `scout_verify_claim` / `scout_import`）与缓存未命中时的惰性回填运行（回填由第一个访问该 case 的工具调用触发，所以冷启动后即使只调 `scout_report` 也可能带上一次对齐），对齐结果随之落到内存 case 与之后的导出；只创建案例的 `scout_start` 不经过它。直接读磁盘 `case.json`、从不经过插件的第三方工具看不到对齐。

@@ -233,6 +233,9 @@ const buildEnvelope = (
 /** Model-facing render budget for one mutation summary, in UTF-8 bytes. */
 const MAX_RENDER_BYTES = 1024
 
+/** Marks a clipped render. Its own byte cost is paid out of the same budget. */
+const ELLIPSIS = '…'
+
 /** Byte length of a JS string in UTF-8, without relying on Node globals. */
 const utf8Length = (text: string): number => {
   let bytes = 0
@@ -243,12 +246,19 @@ const utf8Length = (text: string): number => {
   return bytes
 }
 
-/** Hard cap so an oversized free-text field can never blow the render budget. */
+/**
+ * Hard cap so an oversized free-text field can never blow the render budget.
+ * The returned string — including the ellipsis, whose UTF-8 cost is derived
+ * rather than assumed — is never longer than `limit` bytes. Cutting stops on a
+ * code-unit boundary; a lone surrogate left by slicing a pair still encodes as
+ * 3 bytes, so the measured length stays the conservative one.
+ */
 const clampUtf8 = (text: string, limit: number): string => {
   if (utf8Length(text) <= limit) return text
+  const suffixBytes = utf8Length(ELLIPSIS)
   let clipped = text
-  while (clipped.length > 0 && utf8Length(clipped) > limit - 1) clipped = clipped.slice(0, -1)
-  return `${clipped}…`
+  while (clipped.length > 0 && utf8Length(clipped) > limit - suffixBytes) clipped = clipped.slice(0, -1)
+  return `${clipped}${ELLIPSIS}`
 }
 
 /** Per-field cap applied before the whole-render cap. */
@@ -276,8 +286,10 @@ const formatEnvelope = (value: EnvelopeView): string => {
     lines.push(`imported from ${clipField(value.sourceDir, 160)} (complete: ${value.complete === true})`)
   }
   // The per-field caps keep this from triggering in practice; the whole-render
-  // cap is the guarantee the gate asserts.
-  return clampUtf8(lines.join('\n'), MAX_RENDER_BYTES - 8)
+  // cap is the guarantee the gate asserts. `clampUtf8` already budgets for the
+  // ellipsis it appends, so the call passes the budget itself — no slack magic
+  // number that a later edit could shrink below the suffix cost.
+  return clampUtf8(lines.join('\n'), MAX_RENDER_BYTES)
 }
 
 /** Envelope schema shared by every mutating tool. */
@@ -383,7 +395,9 @@ export function apply(ctx: Context, config: Config = {}) {
    * renders in another language, the still-untouched factory defaults are
    * swapped for this deployment's own defaults, so `case.json` never claims one
    * language while carrying another language's prose. A value the user edited
-   * no longer equals a factory default and is deliberately left alone.
+   * no longer equals a factory default and is deliberately left alone. Curated
+   * interview questions follow the same rule entry by entry while the set still
+   * has the factory length; a differently sized set is kept as authored.
    */
   const alignCaseDefaults = (scoutCase: ScoutCase): ScoutCase => {
     const declared = isScoutLanguage(scoutCase.language) ? scoutCase.language : undefined
@@ -392,8 +406,14 @@ export function apply(ctx: Context, config: Config = {}) {
     const swap = (current: string, from: string, to: string) => (current === from ? to : current)
     const curated = scoutCase.interviewQuestions ?? []
     const factory = source.defaults.interviewQuestions
-    const curatedIsUntouched = curated.length === factory.length
-      && curated.every((question, index) => question === factory[index])
+    const target = strings.defaults.interviewQuestions
+    // Entry-by-entry: a question the user edited no longer equals its factory
+    // slot and is kept verbatim, while every untouched slot aligns. A set whose
+    // length differs from the factory array is taken as fully user-authored and
+    // preserved as a whole (there is no index to compare it against).
+    const alignedQuestions = curated.length === factory.length
+      ? curated.map((question, index) => (question === factory[index] ? target[index] : question))
+      : curated
     return {
       ...scoutCase,
       decisionObjective: swap(
@@ -409,7 +429,7 @@ export function apply(ctx: Context, config: Config = {}) {
           strings.defaults.fitQuestion,
         ),
       },
-      interviewQuestions: curatedIsUntouched ? [...strings.defaults.interviewQuestions] : curated,
+      interviewQuestions: alignedQuestions,
     }
   }
 

@@ -125,7 +125,7 @@ scout_export / scout_import  落盘持久化（五文件 + 完成标记），换
 变更类工具（`scout_start` / `scout_add_source` / `scout_ingest` / `scout_search` / `scout_add_claim` / `scout_verify_identity` / `scout_verify_claim` / `scout_import`，共 8 个）**不再把整份 case JSON 回吐给模型**：
 
 - `value` 是**结构化对象**：`{ ok, caseId, decision, identity, counts: { sources, claims, verified, open }, changed: { kind, ids }, nextActions, persist? }`；
-- `render` 是 **< 1KB 的紧凑摘要**：决策 + 本次增量 + 未核验阻断项 + 下一步；
+- `render` 是**整串不超过 1 KB 的紧凑摘要**：决策 + 本次增量 + 未核验阻断项 + 下一步。上限就是渲染预算本身（`MAX_RENDER_BYTES = 1024` B）：省略号自身的 UTF-8 长度先从预算里扣掉、再按码元裁切，因此**含省略号的整串也不会超过 1024 B**；
 - `persist: { persisted, targetDir, error? }` **只出现在变更类工具的 `autoPersist` 路径**（未尝试落盘时该键省略）。**落盘失败不再静默**：`persist.persisted === false` + `persist.error`，且不会产生 `case_exported` 事件。`scout_export` **不带 `persist` 键**，它用**顶层** `persisted` / `complete` / `error` 表达同一件事；
 - **全量数据仍由 `scout_report`（Markdown 报告）与 `scout_export`（文件）提供**——模型看到的是摘要，不是台账全文。
 
@@ -155,8 +155,8 @@ scout_export / scout_import  落盘持久化（五文件 + 完成标记），换
 dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 
 # 路径 B：本地 tarball 安装（离线、可复现；门禁里跑的就是这一条）
-pnpm pack                                        # 生成 dsh-scout-0.9.1.tgz
-dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.1.tgz"
+pnpm pack                                        # 生成 dsh-scout-0.9.2.tgz
+dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.2.tgz"
 
 # 验证工具挂载
 dsh --profile scout-demo --dump-config
@@ -201,20 +201,20 @@ dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <ex
 
 #### 已实测版本矩阵
 
-**0.9.1 候选 tarball 已在四个精确 DSH 版本上实测通过**（2026-10-12，隔离 profile，四个 binary 均从 npm 真实取用、非本机 DSH）：覆盖安装、冷启动、工具挂载、**真实工具调用门禁**（含 `signal` 字段与 `output.schema` 校验）和卸载。完整门禁由 `npm run check:release` 执行，实测输出：
+**0.9.2 候选 tarball 已在四个精确 DSH 版本上实测通过**（2026-10-13，隔离 profile，四个 binary 均从 npm 真实取用、非本机 DSH）：覆盖安装、冷启动、工具挂载、**扩展后的六步真实宿主门禁**（`scout_start` → 导出 → 冷重启 → 惰性回填 → 跨语言导入 → 卸载，外加「标记缺失 / `complete:false`」两个负向对照）和卸载。完整门禁由 `npm run check:release` 执行，实测输出：
 
 ```text
 dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 ```
 
-| DSH 版本 | npm 渠道（核对当日） | 0.9.1 候选 tarball 结果 |
+| DSH 版本 | npm 渠道（2026-10-12 核对） | 0.9.2 候选 tarball 结果 |
 | --- | --- | --- |
 | `0.1.0-rc.6` | 兼容范围下界 | 通过 |
 | `0.1.2-rc.1` | 旧版回归 | 通过 |
 | `0.2.0-rc.2` | `latest` / `next` | 通过 |
 | `0.2.1-alpha.2` | `alpha` | 通过 |
 
-本表此前记录的是同日 **0.9.0** 候选 tarball 的结果；0.9.1 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**）并重新跑通，故直接更新为本版本。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
+本表此前记录过 **0.9.0** 与 **0.9.1** 候选 tarball 的结果；0.9.2 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**），只把 `@deepseek-ai/schemastery` 由 `^3.18.2` 对齐到 `~3.18.4`，并用扩展后的门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。npm 渠道那一列仍是 2026-10-12 的核对结果，本次复跑未重新核对。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
 
 未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
 
@@ -236,7 +236,7 @@ dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 
 - 相对 `scoutDir` 以**会话的 cwd** 为基准解析，不再落到 DSH 进程的当前目录；
 - `autoPersist: true` 时，每次变更后自动落盘；**失败可见**：返回值带 `persist.persisted=false` + `persist.error`，且不会写 `case_exported` 事件；
-- `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；它还会对齐案例自带、**仍是出厂默认**的文案，但判定粒度不同：`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐），精选面试问题是**整组 all-or-nothing**（整组逐项未被编辑才对齐；改过任意一条则整组保留创建语言，`en` 报告此时仍含约 79 个 CJK 字符）。**用户编辑过的文案保持原样**；与案例自带语言相同时是 no-op，默认 `zh-CN` 对既有用户零变化。
+- `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；它还会对齐案例自带、**仍是出厂默认**的文案，判定粒度不同：`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐）；精选面试问题是**按下标逐条**——长度与出厂数组相同时，该下标仍是出厂默认的条目替换为本部署语言的同下标默认值，**用户改过的那条保持原样**；长度与出厂数组不同时，整组视为用户自撰、原样保留。判定依据是「是否等于该下标的出厂默认」，不是编辑历史（把某条改回出厂原文，那条会被对齐）。与案例自带语言相同时是 no-op，默认 `zh-CN` 对既有用户零变化。另外，`case.json` 里的 `language` 是**本部署的渲染语言**，不是文件内容的语言：对齐只按这个标签判定，**不校验标签与内容是否自洽**，所以手工把 `language` 改成与内容不符的值再导入时，插件会按「语言相同」提前返回、不做校正（正常的导出 / 导入 / 升级路径不受影响：0.9.0 旧导出的 `language` 恒为 `zh-CN`，与其内容一致）。
 
 ## 数据持久化
 
@@ -254,9 +254,9 @@ export.complete.json   0.9.1 起：完成标记（先写 complete:false，五文
 ```
 
 - 导出顺序是「**先记 `case_exported` 事件、后写文件**」，所以磁盘上的 `events.jsonl` 包含本次导出；「导出 → 导入 → 再导出」的事件序列稳定；
-- 完成标记 `export.complete.json` 的内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`：**写入前先置 `complete: false`**，五个数据文件全部落盘后再改写为 `complete: true`——所以**陈旧标记不会为半份导出宣称完整**（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」；**`eventCount` 只有在 `complete: true` 时才与磁盘上 `events.jsonl` 的行数一致**（导出中断时它记录的是那次失败尝试期望的事件数）；
+- 完成标记 `export.complete.json` 的内容形如 `{ schemaVersion, caseId, complete, files, eventCount }`：**写入前先置 `complete: false`**，五个数据文件全部落盘后再改写为 `complete: true`——所以**陈旧标记不会为半份导出宣称完整**（覆盖写场景下，上一次成功导出的标记会在新文件写入前先被降级）。`scout_import` 读的是标记里的 **`complete` 字段**，而不是「标记文件是否存在」；**`eventCount` 只有在 `complete: true` 时才与磁盘上 `events.jsonl` 的行数一致**（导出中断时它记录的是那次失败尝试期望的事件数），读取方请以 `complete` 为准、不要只比较 `eventCount`；标记里的 `files` 与 `scout_export` 返回值里的 `files` **同名不同义**——标记只列**五个数据文件**，`scout_export` 返回的是这次调用写出的**六个名字**（五个数据文件 + 标记自身），两者都正确；
 - `scout_import` 能导入**没有完成标记**的旧导出；标记缺失或 `complete: false` 时，只要**五个数据文件都已落盘**，导入仍会进行，但返回值报 `complete: false`，由调用方决定是否信任这份快照（五个数据文件缺任何一个、例如在写 `claims.json` 时中断的全新导出，仍是硬失败）；
-- **会话恢复是否自动回填，取决于导出是否完整**：缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才会被惰性回填，并追加 `case_rehydrated` 事件，让"凭空出现"的 case 状态仍然可审计；**0.9.0 的旧导出没有完成标记，不会被自动回填**，需要用 `scout_import` 显式恢复。
+- **会话恢复是否自动回填，取决于导出是否完整**：缓存未命中时，**只有完整导出**（完成标记 `complete: true`）才会被惰性回填，并追加 `case_rehydrated` 事件，让"凭空出现"的 case 状态仍然可审计；**0.9.0 的旧导出没有完成标记，不会被自动回填**，需要用 `scout_import` 显式恢复。对齐本身只在 `decide` 路径生效——重算决策的工具调用（`scout_add_claim` / `scout_ingest` / `scout_search` / `scout_verify_identity` / `scout_verify_claim` / `scout_import`）与缓存未命中时的惰性回填会经过它；回填由**第一个访问该 case 的工具调用**触发（`requireCase`），所以冷启动后即使只调 `scout_report` 也可能带上一次对齐，而只创建案例的 `scout_start` 不经过。对齐结果随第一次 `decide` 落到内存 case 与之后的导出；**直接读磁盘 `case.json`、从不经过插件的第三方工具看不到对齐**。
 
 ## 何时不要用（设计边界）
 
@@ -265,7 +265,7 @@ export.complete.json   0.9.1 起：完成标记（先写 complete:false，五文
 - 它**不会**替你把融资信息、公司自述或招聘启事当成已核实的事实；
 - 它**不构成**法律、投资或医疗建议；
 - 主体核验依赖 E3 官方源，若 gsxt 等无法访问，报告会如实标记"待核验"；
-- **0.9.1 明确不做**：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分 / 排名。理由与边界见 [CHANGELOG](CHANGELOG.md)；其中「自造 session event 会让插件自己写的会话无法重建」是硬约束，见[产品契约 §5.1](docs/dsh-scout-product-contract.md)。
+- **0.9.1 与 0.9.2 明确不做**：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分 / 排名。理由与边界见 [CHANGELOG](CHANGELOG.md)；其中「自造 session event 会让插件自己写的会话无法重建」是硬约束，见[产品契约 §5.1](docs/dsh-scout-product-contract.md)。
 
 完整 MVP 边界与验收标准见[产品契约](docs/dsh-scout-product-contract.md)；首个示例案例见 [Snapmaker HR Head](docs/fixtures/dsh-scout/snapmaker-hr-head.json)。
 
@@ -277,7 +277,7 @@ pnpm test                 # 构建 + 单元测试（决策默认值/证据约束
 pnpm run check:release    # 四个精确 DSH 版本的 profile 门禁 + 打包内容检查
 ```
 
-`test:profile` 会在隔离 profile 里**真的发一次工具调用**（`scout_start` → `scout_report`），断言 `isError === false`、`value` 是对象、`render` 内容 < 1KB，并保留 `--dump-config` 层、必需工具挂载与卸载 disposer 的断言；脚本注释里写明它到底覆盖了什么、没覆盖什么。`check:release` 随后用四个精确 DSH 版本复跑 profile 门禁（并把「超出声明范围（预期）」与「范围内失败（回归）」分开报），最后检查打包内容。
+`test:profile` 会在隔离 profile 里跑一条**六步真实宿主场景链**：创建（`scout_start` + `scout_add_source` + `scout_add_claim`）→ 导出（绝对 `targetDir`、6 个文件、完成标记 `complete: true`）→ 冷重启（同一 `DSH_HOME`/profile 的第二个进程）→ 惰性回填（不 `scout_import`，断言决策不变并落 `case_rehydrated`）→ 跨语言导入（`en` profile 导入 zh 导出，报告与 `report.md` 的 CJK = 0）→ 卸载（无 registry 残留），另有三条负向对照：`output.schema` 敏感性、标记缺失、标记 `complete:false`。全量约 16 秒，可用 `DSH_SCOUT_SMOKE_SKIP_CROSS_LANGUAGE` / `DSH_SCOUT_SMOKE_SKIP_REHYDRATION_CONTROL` / `DSH_SCOUT_SMOKE_SKIP_NEGATIVE_CONTROL` 跳过，跳过的项会在 PASS 行如实报为覆盖降级。**仍未覆盖**（脚本注释里逐条写明）：真实 LLM / agent loop 与 approval 策略、相对路径（`agent` 未设置时 `cwd` 为 `undefined`，门禁只用绝对路径）、`autoPersist` 自动落盘、真实进程中断（撕裂导出靠改写标记复现）、其余 6 个工具只断言注册。`check:release` 随后用四个精确 DSH 版本复跑同一条门禁（并把「超出声明范围（预期）」与「范围内失败（回归）」分开报），最后检查打包内容。
 
 ## 路线图
 
@@ -291,6 +291,7 @@ pnpm run check:release    # 四个精确 DSH 版本的 profile 门禁 + 打包�
 - ✅ v0.8：首个 npm 发布（0.8.0）；0.8.1 声明 Schemastery `Config`、补 `exports` 映射、修可选服务注入；0.8.2 对齐 DSH 0.2 rc 通道
 - ✅ v0.9.0：适配 DSH 0.2 运行时；四个精确版本的兼容矩阵 + 夜间兼容检查 + 兼容 issue 模板
 - ✅ v0.9.1：输出契约（结构化值 + 紧凑摘要）、落盘可信度、服务调用时绑定与惰性回填、`language` 与 `## Coverage`、`/scout` 与 `scout` Skill、分发契约（`engines.dsh` / `manifestVersion` / locale / icon）
+- ✅ v0.9.2：真实宿主端到端门禁（六步场景链 + 完成标记负向对照，关闭 0.9.1 验证报告里的 U11 盲区）、精选面试问题**按下标逐条**对齐（关闭 D10）、render 整串上限加固、`@deepseek-ai/schemastery` 对齐 `~3.18.4`
 - ⏭ v0.10.0（计划）：client 面板、`ctx.storageDomain` 持久化重写、`presentationMeta` 载荷、对比矩阵升级与可扩展证据策略（**评分仍不做**）
 
 ## 社区
