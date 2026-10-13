@@ -148,19 +148,24 @@ scout_export / scout_import  落盘持久化（五文件 + 完成标记），换
 
 ## 安装到 DSH Profile
 
-两条已验证路径，任选其一：
+三条已验证路径，任选其一：
 
 ```sh
-# 路径 A：Git 安装（抓源码，会执行 prepare）
+# 路径 A：npm 安装（从 npm 拉取已发布的包）
+dsh plugin --profile scout-demo add dsh-scout
+
+# 路径 B：Git 安装（抓源码，会执行 prepare）
 dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 
-# 路径 B：本地 tarball 安装（离线、可复现；门禁里跑的就是这一条）
+# 路径 C：本地 tarball 安装（离线、可复现；门禁里跑的就是这一条）
 pnpm pack                                        # 生成 dsh-scout-0.9.2.tgz
 dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.2.tgz"
 
 # 验证工具挂载
 dsh --profile scout-demo --dump-config
 ```
+
+**刚发布的版本可能暂时不会被 `latest` 选中**：pnpm ≥ 11 默认启用最小发布年龄（minimum release age）供应链保护，太新的版本会被跳过、回退到通过年龄门禁的最新版本（0.9.2 发布后立即安装曾解析到 0.9.0）。需要立刻安装某个刚发布的版本时**显式指定版本**，例如 `dsh plugin --profile <name> add dsh-scout@0.9.2`；pnpm 会把它记入 profile 的 `minimumReleaseAgeExclude`（输出里会打印 `Added 1 entry to minimumReleaseAgeExclude…`）。
 
 要求：Node ≥ 22.19。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
 

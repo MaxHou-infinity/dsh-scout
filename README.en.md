@@ -148,19 +148,24 @@ Both are **optional bindings**: when the host exposes no `commands` / `skills` s
 
 ## Install into a DSH profile
 
-Two verified paths:
+Three verified paths:
 
 ```sh
-# Path A: git install (fetches source, runs prepare)
+# Path A: npm install (fetches the published package from npm)
+dsh plugin --profile scout-demo add dsh-scout
+
+# Path B: git install (fetches source, runs prepare)
 dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
 
-# Path B: local tarball (offline, reproducible; this is the exact form the gate runs)
+# Path C: local tarball (offline, reproducible; this is the exact form the gate runs)
 pnpm pack                                        # produces dsh-scout-0.9.2.tgz
 dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.2.tgz"
 
 # Verify the mounted tools
 dsh --profile scout-demo --dump-config
 ```
+
+**A just-released version may not be picked up by `latest` yet**: pnpm ≥ 11 enables minimum-release-age supply-chain protection by default, so too-new versions are skipped and pnpm falls back to the newest version that passes the age gate (installing right after 0.9.2 shipped resolved to 0.9.0). To install a just-released version immediately, **pin it explicitly**, e.g. `dsh plugin --profile <name> add dsh-scout@0.9.2`; pnpm records it under the profile's `minimumReleaseAgeExclude` (the output prints `Added 1 entry to minimumReleaseAgeExclude…`).
 
 Requirements: Node ≥ 22.19. A git install runs `prepare`; pnpm may require an explicit `allowBuilds` entry for `dsh-scout` (only allow a pinned source you have reviewed).
 
