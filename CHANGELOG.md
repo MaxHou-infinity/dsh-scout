@@ -4,6 +4,41 @@
 
 本文件从 0.9.1 开始记录；0.9.0 及更早版本的变更见仓库的 git tag。
 
+## [0.9.3] - 2026-10-13
+
+**待发布**：本条目描述冻结为 0.9.3 的工作树；npm 元数据（tarball / shasum / integrity / provenance / git tag）在发布后补记。
+
+0.9.3 的主题是**安装体验**，不加功能、不改运行时契约。缘起是一份在真实桌面 App 上完整走完安装的评审：README 的「三条已验证路径」对桌面 App 用户**全部不可用**——桌面版的 `desktop` profile 被 Electron 应用独占，CLI 对它的所有 `dsh plugin` 子命令都按 profile 名硬拒绝（`error: profile "desktop" is managed exclusively by the Electron application`，连兼容性逃生门 `allow-version` 一起拒绝），而桌面 App 恰恰是这类插件最主流的入口。本版把「App 内安装」补成主路径，并给安装补上可执行的判据。
+
+### Added
+
+- **README 新增「路径 0：桌面 App」**（README.md / README.en.md 逐段同步）：说明 `desktop` profile 的独占拒绝与「这是按 profile 名的硬拒绝、所有 `dsh plugin` 子命令都会命中」，给出**侧边栏 → 插件页**里的安装串 `dsh-scout@0.9.3`，并写明装完无需重启——实测 12 个 `scout_*` 工具即时注入当前会话。
+- **README 新增「装上了吗（成功判据）」**：桌面**四条**判据，且**区分两个 GUI 面**——**侧边栏 → 插件页**的「已安装」里找到 `dsh-scout`、打开**详情页**看 `v0.9.3`（版本号只在这一页）→ **设置 → 内置插件 → 插件列表**看该行**已启用 + 运行中**（不是**已停用**/**启动失败**/**条件启用**；这一页不显示版本号）→ 新开一轮对话出现 12 个 `scout_*` 工具 → `/scout status <caseId>` 命中且输出末尾带 `· dsh-scout 0.9.3`；CLI 用 `dsh --profile <your-profile> --dump-config | grep -A2 'dsh-scout'`，并点明「组合进去 ≠ 运行时挂上了」，最可靠的判据始终是那 12 个工具与 `/scout`。
+- **README 新增「卸载与升级」**：CLI 的 `add dsh-scout@<new-version>` / `remove dsh-scout` 与桌面 App 的**侧边栏 → 插件页**两条写法，并说明安装失败会回滚 profile 清单与 lockfile。
+- **README 补 `compatibility.json` 手动豁免路径**（评审 P2-3）：桌面用户拿不到 `allow-version`，文档给出 profile 目录下该文件的平铺 JSON 写法（精确 `package@version` → 精确 DSH 版本数组，示例 `{"dsh-scout@0.9.3": ["0.2.0-rc.2"]}`），并复述同一组边界、`--accept-risk` 风险确认与「写法不合规的记录被忽略并告警」的读取行为。
+- **门禁守护 README 的版本引用**（评审 P2-4）：README / README.en.md 里**活的**版本引用——`dsh-scout-<version>.tgz`、安装命令里的 `dsh-scout@<version>` 操作数、`compatibility.json` 的 `"dsh-scout@<version>"` 键、git ref `#v<version>`——必须等于 `package.json` 的 version。守卫同时落在 `tests/package.test.mjs`（每次 `npm test`、CI，毫秒级）与 `scripts/check-release.mjs` 最前面（独立第二实现，README 过期时不必先跑完整套单测与约两分钟的四版本矩阵）。历史提及（实测矩阵、路线图、发布叙述）按设计不在守卫范围。
+
+### Changed
+
+- **安装章节上移到「快速上手」之后**，三条 CLI 路径降级为「CLI / 自建 profile 用户适用」；`scout-demo` 这类**虚构** profile 名改为显式占位符 `<your-profile>`，附「怎么知道我的 profile 名」（没有 `dsh profile list` 子命令，直接 `ls ~/.dsh/profiles`）与「照抄示例名不会报错、只会把插件静默装进另一个 profile」的陷阱说明。
+- **git 安装路径保留但降级**到「其他安装方式与取舍」表，标注**不推荐**：仓库不含 `dist/`，`prepare` 会跑 `tsc` 并安装 devDependencies，是三条路径里唯一会执行代码的；只保留「需要未发布提交时」的理由。示例 ref 由不可执行的 `#<commit>` 改为**真实 tag**（`github:MaxHou-infinity/dsh-scout#v0.9.3`；仓库自 `v0.3.0` 起共 10 个 tag，`v0.9.1` 是本地迭代版、未打 tag——评审「git tag 为空」的判断与事实不符）。
+- **主安装命令显式锁版本**（`dsh-scout@0.9.3`，不再是裸包名）：pnpm ≥ 11 的最小发布年龄（minimum release age）保护会让刚发布的版本被静默跳过、回退到旧版；该说明从「注意事项」降为路径 0 下的一句注解，现象 / 原因 / `minimumReleaseAgeExclude` 特征全部保留。
+- **Node 要求的适用范围**：「Node ≥ 22.19」只对 CLI / 门禁路径成立；桌面 App 自带 node / pnpm 运行时（实测 node 24.21.0 + pnpm 11.7.0），无需安装 Node。
+- **桌面场景建议绝对 `scoutDir`**：默认 `./dsh-scout` 依赖 cwd，桌面会话的 cwd 语义与 CLI 不同；文档建议在 `~/.dsh/profiles/desktop/cordis.patch.yml` 里给 `id: dsh-scout` 配绝对路径，并提示该文件由 App 维护、手改前先退出 App。
+- **`/scout status <caseId>` 的输出尾部新增 `· dsh-scout 0.9.3`**：纯追加，原有前缀逐字节不变，`status` 之外的子动作不受影响。这是 0.9.3 唯一的**用户可见输出变化**，用途是让桌面用户自证「运行时真正加载的是哪个版本」——桌面既看不到 stderr、也没有运行日志。版本号取自源码常量 `PLUGIN_VERSION`（`src/index.ts`），随发布手动 bump，不从 `package.json` 运行时读取。
+- **加载横幅（评审 §5.3）不做，改为让状态在两个 GUI 面里可读**：取证显示桌面 App 的 stderr 不可见——Electron 主进程的 fd0/fd1/fd2 全部指向 `/dev/null`（host 进程的 fd1/fd2 是通向主进程的管道，主进程再 pipe 到 `/dev/null`），`~/Library/Logs/DeepSeek Harness/` 为空目录、全盘没有 DSH 运行日志，`ctx.logger()` 也没有落盘出口（cordis 只有内存 ring buffer exporter，其 `startupLogs` 只在 `StartupError` 分支挂上）——加一行加载横幅**没有用户看得到**。落点改为文档与验收 checklist 写清 GUI 里**两个各答一个问题**的面：① **侧边栏 → 插件页**（`dsh-client-ui-plugin-manager`）是**管理面**，回答安装 / 启用 / 移除与**装的是哪版**（**详情页**标题旁的 `v{version}`，来自 `BundleInfo.version`；列表卡片只有「实验性 / 异常」状态标签）；② **设置 → 内置插件 → 插件列表**（`dsh-client-ui-settings-plugin-inventory`）是**只读检查面**，回答**装没装 / 为什么没生效**——按「会话插件 / 全局插件」分组，用**已启用 / 已停用 / 启动失败 / 条件启用**标签与**运行中 / 启动失败 / 等待依赖 / 未运行**运行状态说话，**不显示版本号**（wire 行只有 `{ entryId, moduleName, meta?, enabled, fiberPhase }`）。关键依据：启动时被禁用的插件行（peer 版本不匹配是其中一种）已被投影到这一页的「已停用」——宿主侧就是 `enabled: !entry.disabled`（`dsh-host-plugin-inventory/lib/index.js:131`）——所以那行被丢进 `/dev/null` 的 stderr，答案早就在 GUI 里；**插件被 disabled 时它自己不可能输出任何东西**，这正是「没有任何报错」在桌面必须去 GUI 查的理由。
+
+### Docs
+
+- **新增 `docs/install-verification.md`**：把桌面 App 安装固化成可执行的手工验收 checklist（Lane D）——确认运行时版本 → 确认兼容性 → App 内安装 → 生效验证（**侧边栏 → 插件页**看「已安装 + `v0.9.3`」，**设置 → 内置插件 → 插件列表**看「已启用 + 运行中」，辅以 bundle installed+enabled / loader 行 fiber active / 插件总数变化）→ 功能验证（12 个 `scout_*` 工具即时注入、`scout_start` + `scout_report` 真实调用、`/scout status` 输出带版本）——并写明它与现有 CLI 门禁（Lane C：`npm run test:profile` 的六步链）的差异、自动化门禁为什么覆盖不到 Electron 独占 profile、每条 lane 的触发时机，以及一条**如实标注的残差**：GUI 两页只做过源码取证 + profile 组合实测，**没有 GUI 活体验证**，判据标为「待人工点一次确认」。仓库内文档，不在 npm 包内。
+- **安装评审原件入库**：`docs/dsh-scout-install-ux-review.md`（桌面 App 上的完整实测记录），仓库内文档，不在 npm 包内。
+- 产品契约的安装 / 分发段落与 README 的新安装模型对齐（桌面 App 为主路径），并把 `compatibility.json` 的手动豁免路径记进契约的兼容性段落。
+
+### Known boundaries
+
+- **桌面 App 的 `desktop` profile 只能由 App 管理**：CLI 对它的 `add` / `list` / `allow-version` 等所有子命令都按 profile 名拒绝。这是 DSH 参数解析层的硬编码判断（`rejectElectronProfile`），不是权限或配置问题；0.9.3 不改 DSH，只在文档里如实说明，并给出**侧边栏 → 插件页**安装与手动豁免两条替代路径。
+- **README 版本守卫只覆盖「活的」引用**：历史版本串（实测矩阵里的 `dsh-scout@0.9.2`、路线图条目、发布叙述）按设计不参与断言，所以它防的是「忘改安装串」，不是「历史叙述过期」。
+
 ## [0.9.2] - 2026-10-13
 
 **已发布**（2026-10-13）：npm `dsh-scout@0.9.2`（`dist-tags.latest` = `0.9.2`），tarball `https://registry.npmjs.org/dsh-scout/-/dsh-scout-0.9.2.tgz`（**23 个文件**），shasum `bedb4a656709d5d0e77d5f4b410e2173c0b8eb31`，integrity `sha512-UIJOP8KalLqiEBssFB3+sw+cP1+R78nNZzwA/Wg5gT1o/NLOBgWccURdgbqk4fNdJwGKYVyNvbRuy4RZYrusDw==`，带 **Sigstore provenance**（透明日志 `https://search.sigstore.dev/?logIndex=3244828180`），由 GitHub Actions 以 `npm publish --provenance --access public` 发布；git tag `v0.9.2`（annotated，指向 `64138a0`）与 GitHub Release `v0.9.2`（附件 `dsh-scout-0.9.2.tgz`，130,691 B）同批创建；发布 workflow run `38406696598` success（16m59s：四版本 release gate → `pnpm pack` → npm publish → GitHub Release）。发布前验收：`npm test` **118/118**、`test:profile` PASS（六步真实宿主链）、`pnpm pack --dry-run` 干净、`env -u DSH_BIN npm run check:release` **4/4 PASS**；独立验证 [verification-0.9.2.md](docs/verification-0.9.2.md)（仓库文档，不在 npm 包内）判定 **GO**，无新缺陷。

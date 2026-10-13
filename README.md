@@ -103,6 +103,168 @@ scout_export / scout_import  落盘持久化（五文件 + 完成标记），换
 - **Sources**：带 URL 的来源清单（可点击回溯）
 - **Interview questions**：建议的面试反问（未调查维度的问题优先）
 
+## 安装
+
+先确认你在哪运行——两条入口的安装方式完全不同，**不要混用**：
+
+| 你在哪运行 | 目标 profile | 安装方式 |
+|---|---|---|
+| **桌面 App（DeepSeek Harness）** | `desktop` | **App 内安装**（唯一路径，见下） |
+| CLI / headless / 自建 profile | 你自己的 profile 名 | `dsh plugin --profile <your-profile> add …` |
+
+### 路径 0：桌面 App（推荐）
+
+桌面版的 `desktop` profile 由 Electron 应用独占，CLI 无法管理它——`dsh plugin --profile desktop list` 与 `add` 都会被直接拒绝：
+
+```text
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+这是 CLI 里**按 profile 名**的硬拒绝，该 profile 的**所有** `dsh plugin` 子命令都会命中——包括下面兼容性小节里的 `allow-version`。请在**侧边栏 → 插件页**（安装、启用、移除都在这一页）里安装：
+
+```sh
+dsh-scout@0.9.3
+```
+
+> 版本务必显式写死。pnpm ≥ 11 默认启用最小发布年龄（minimum release age）供应链保护，裸包名会让刚发布的版本被静默跳过、回退到旧版（0.9.2 发布后立即安装曾解析到 0.9.0）；写上精确版本后 pnpm 会把它记入 profile 的 `minimumReleaseAgeExclude`（输出里打印 `Added 1 entry to …`）。
+
+装完不需要重启：实测 12 个 `scout_*` 工具即时注入当前会话。桌面会话的 cwd 与 CLI 不同，建议在 profile 的 `cordis.patch.yml` 里给 `scoutDir` 配绝对路径（见下文「配置」）。
+
+### 路径 1：CLI（npm，推荐）
+
+```sh
+# 把 <your-profile> 换成你自己的 profile 名，不要照抄示例
+dsh plugin --profile <your-profile> add dsh-scout@0.9.3
+```
+
+<details>
+<summary>怎么知道我的 profile 名？</summary>
+
+`dsh` 没有 `profile list` 子命令（`profile` 会被当成 profile 名解析并报错），直接看目录：
+
+```sh
+ls ~/.dsh/profiles          # 或用 $DSH_HOME/profiles
+```
+
+列出的每个名字都是可用 profile 名（如 `web`，或你自建的 profile）。`desktop` 由 App 独占，CLI 对它执行任何 `dsh plugin` 子命令都会被拒绝。
+</details>
+
+**不要照抄示例名**（例如 `scout-demo`）：CLI 会照常创建并使用它、不报任何错——结果是插件装进了另一个 profile，你以为装好了却完全没生效。
+
+### 路径 2：本地 tarball（离线 / 可复现）
+
+```sh
+pnpm pack                                        # 生成 dsh-scout-0.9.3.tgz
+dsh plugin --profile <your-profile> add "file:$PWD/dsh-scout-0.9.3.tgz"
+```
+
+### 其他安装方式与取舍
+
+| 来源 | 自带构建产物 | 执行安装脚本 | 建议 |
+|---|---|---|---|
+| npm（路径 1） | ✅ 自带 `dist/` | ❌（实测 `pendingBuilds: []`） | **推荐** |
+| 本地 tarball（路径 2） | ✅（`pnpm pack` 产物） | ❌ | 离线 / 自测 |
+| git：`github:MaxHou-infinity/dsh-scout#v0.9.3` | ❌（仓库不含 `dist/`） | ✅ `prepare` 会跑 `tsc`，并安装 devDependencies | **不推荐**；只在需要未发布提交时使用 |
+
+git 路径的 ref 必须是**真实存在的 tag 或 commit**：仓库自 `v0.3.0` 起共 10 个 tag（`v0.3.0` … `v0.9.2`；`v0.9.1` 是本地迭代版、未打 tag），本次发布创建 `v0.9.3`。它也是三条路径里唯一会执行代码的：仓库不含 `dist/`，装完必然在本地构建，pnpm 可能要求为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
+
+> 桌面 App 自带 node / pnpm 运行时（实测 node 24.21.0 + pnpm 11.7.0），**无需**安装 Node；「Node ≥ 22.19」只对 CLI / 门禁路径成立。
+
+### 装上了吗（成功判据）
+
+**桌面 App**
+
+1. **侧边栏 → 插件页**：`dsh-scout` 出现在「已安装」里；**打开它的详情页**，标题旁带 `v0.9.3`——版本号只在这一页（列表卡片上只有「实验性 / 异常」状态标签）；
+2. **设置 → 内置插件 → 插件列表**：`dsh-scout` 行是 **已启用**、运行状态 **运行中**，不是 **已停用** / **启动失败** / **条件启用**（这一页**不显示版本号**）；
+3. 新开一轮对话，工具列表里出现 12 个 `scout_*` 工具；
+4. 输入 `/scout status <caseId>` 能命中命令，且输出末尾带插件版本（`· dsh-scout 0.9.3`）——桌面看不到 stderr 与日志，这是确认运行时真正加载了哪个版本的自证面。
+
+**CLI**
+
+```sh
+# 组合树里应出现 dsh-scout 那一层
+dsh --profile <your-profile> --dump-config | grep -A2 'dsh-scout'
+```
+
+但**组合进去 ≠ 运行时挂上了**：最可靠的判据始终是「12 个 `scout_*` 工具是否出现」「`/scout` 是否命中」。
+
+CLI 在运行时不兼容时会把插件行置为 disabled，进程只在 stderr 打一行 `dsh: disabling profile plugin <row>: <reason>`——现象是"插件没生效"，不是显眼的红色报错。**桌面 App 看不到 stderr**（实测 Electron 主进程的 fd0/fd1/fd2 都指向 `/dev/null`，`~/Library/Logs/DeepSeek Harness/` 为空目录、全盘没有 DSH 运行日志），桌面排障只能走 GUI：**设置 → 内置插件 → 插件列表**按「会话插件 / 全局插件」分组，用 **已启用 / 已停用 / 启动失败 / 条件启用** 标签与 **运行中 / 启动失败 / 等待依赖 / 未运行** 运行状态回答"装没装、为什么没生效"（这一页**没有版本号**）——启动时被禁用的插件行（peer 不匹配是其中一种）会以「已停用」出现在这里，宿主侧的投影就是 `enabled: !entry.disabled`；那行被丢进 `/dev/null` 的 stderr，答案其实已经在 GUI 里。装的是哪一版，去**侧边栏 → 插件页**打开该插件的详情页看 `v{version}`。
+
+### 卸载与升级
+
+```sh
+dsh plugin --profile <your-profile> add dsh-scout@<new-version>   # 升级：换成目标版本，同样写死
+dsh plugin --profile <your-profile> remove dsh-scout              # 卸载
+```
+
+桌面 App 请在**侧边栏 → 插件页**里升级 / 移除。安装失败会回滚 profile 清单与 lockfile。
+
+### DSH 兼容性
+
+DSH 对插件的兼容性有**三个层次**，不要混为一谈：
+
+| 层次 | 位置 | 谁在执行 | 不匹配会怎样 |
+|---|---|---|---|
+| **声明** | `package.json` 的 `engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`） | 目前**没有任何代码**读取（DSH 0.2.0-rc.2 运行时不读 `engines.dsh`；官方 manifest 的注释写明 *"DSH compatibility is declarative until a reader enforces it"*） | 只表达作者意图，不拦截任何东西 |
+| **生效** | `peerDependencies` 中名字为 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围（本仓库只有 `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"` 一条） | DSH 安装检查 + profile 启动预检 `evaluatePluginCompatibility()` | 安装阶段拒绝，或启动时禁用该插件行 |
+| **不被校验** | `@deepseek-ai/cordis: ">=4.0.2 <5"`（以及 `@deepseek-ai/schemastery`） | DSH 的 peer 名字过滤只认 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | 由 pnpm 解析，DSH 不做兼容判定 |
+
+三个必须知道的细节：
+
+1. **预发布版本参与匹配。** 判定用 `semver.satisfies(runtime, range, { includePrerelease: true })`。上界写成 `<0.3.0-0` 正是为了在开启 prerelease 的前提下排除 `0.3.0-alpha` 及以后；反过来说，这条 range 的写法**依赖这个标志位**——去掉它，`0.2.0-rc.2` 会被判成不匹配。**用其它工具核对这条范围时请带上 `includePrerelease`**：按默认 semver 语义（node-semver 的预发布规则——预发布版本只被「同 major.minor.patch 元组且带预发布」的比较器接受），`0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2` 都会被判为**不满足**（semver 7.8.5 实测：`0.1.0-rc.6` 两种语义均为 true；后三者 plain=false / incl=true；`0.3.0-alpha.1` 两者均为 false）。**以 DSH 的判定为准。**
+2. **失败的形态是「静默不加载」，不是报错。** 安装时能预判的 spec（`add` 一个 registry 包）会在 pnpm 执行前直接拒绝并打印豁免命令；git / tarball spec 在安装后判定，失败会回滚 profile 清单与 lockfile。而**已经在 profile 里、启动时才发现不匹配**的插件行会被置为 disabled，本进程只在 stderr 打一行 `dsh: disabling profile plugin <row>: <reason>`——用户看到的现象是"插件没生效"（工具不在、`/scout` 不在），不是一条显眼的红色报错。**这一行只对 CLI 用户可见**；桌面 App 的 stderr 指向 `/dev/null`、没有运行日志（见上文「装上了吗」），桌面上的状态只能在**设置 → 内置插件 → 插件列表**里看（装在哪个版本则看**侧边栏 → 插件页**）。
+3. **这一条 `@deepseek-ai/dsh-tools` peer 就是全部门禁。** 改 peer 范围等于改兼容承诺。
+
+#### 逃生门：profile 级精确版本豁免
+
+如果只是**声明范围过期**（例如 DSH 发了 `0.3.0-alpha.1`，而插件其实还能跑），可以不做新版本、直接在 profile 里豁免：
+
+```sh
+dsh plugin --profile <name> version-exemptions   # 查看当前豁免与运行时版本
+dsh plugin --profile <name> allow-version <package>@<version> --dsh-version <exact-dsh-version> --accept-risk
+dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <exact-dsh-version>
+```
+
+豁免记录写在 profile 目录下、与 `package.json` / `cordis.patch.yml` 并列的 `compatibility.json`（精确 `package@version` → 允许的精确 DSH 版本列表）。四条边界：
+
+- **只接受精确版本**，不接受 range；
+- 只授权「这一个包版本 + 这一个 DSH 版本」这一对，**不随插件或 DSH 升级继承**；
+- **不授权**依赖的安装脚本；
+- 生效时机是**下一次组合**：live profile 会重新组合并挂载，startup-only profile 需要重启。
+
+授予豁免需要显式风险确认（CLI 的 `--accept-risk`，插件管理器里是 `acceptRisk: true`），DSH 会在写入前打印风险警告——不兼容的插件可能崩溃或损坏数据。
+
+**桌面 App 用户**：`allow-version` 与其它 `dsh plugin` 子命令一样被按 profile 名拒绝，需要手动写这个文件。它是一个平铺的 JSON 对象——精确 `package@version` → 允许的精确 DSH 版本数组，例如桌面 App 的运行时为 `0.2.0-rc.2` 时：
+
+```json
+{
+  "dsh-scout@0.9.3": ["0.2.0-rc.2"]
+}
+```
+
+手写同样受上面四条边界约束（只接受精确版本、只授权「这一个包版本 + 这一个 DSH 版本」这一对、不授权安装脚本、下一次组合生效），并且**绕过了 CLI 的 `--accept-risk` 风险确认**——不兼容的插件可能崩溃或损坏数据。运行时的精确版本可从 `~/.dsh/dsh-runtimes/*/runtime.json` 的 `desktopVersion` 读取；写法不合规的记录会被忽略并给出告警，不会让 profile 不可用。
+
+#### 已实测版本矩阵
+
+**`dsh-scout@0.9.3` 候选 tarball 已在四个精确 DSH 版本上实测通过**（2026-10-13 发布前，隔离 profile，四个 binary 均从 npm 真实取用、非本机 DSH）：覆盖安装、冷启动、工具挂载、**六步真实宿主门禁**（`scout_start` → 导出 → 冷重启 → 惰性回填 → 跨语言导入 → 卸载，外加「标记缺失 / `complete:false`」两个负向对照）和卸载。完整门禁由 `npm run check:release` 执行，实测输出：
+
+```text
+dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
+```
+
+| DSH 版本 | npm 渠道（2026-10-12 核对） | 0.9.3（候选 tarball）结果 |
+| --- | --- | --- |
+| `0.1.0-rc.6` | 兼容范围下界 | 通过 |
+| `0.1.2-rc.1` | 旧版回归 | 通过 |
+| `0.2.0-rc.2` | `latest` / `next` | 通过 |
+| `0.2.1-alpha.2` | `alpha` | 通过 |
+
+本表此前记录过 **0.9.0** 与 **0.9.1** 候选 tarball 的结果；0.9.3 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**）：本版改的是安装文档与诊断面——README 安装章节补上桌面 App 主路径、README 版本引用守卫、`/scout status` 输出带插件版本——依赖与运行时契约未动，并用同一道门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。npm 渠道那一列仍是 2026-10-12 的核对结果，本次复跑未重新核对。上一版 **0.9.2 已发布到 npm**（`dist-tags.latest` = `0.9.2`）：发布 workflow（run `38406696598`）在 `pnpm pack` 之前跑了同一道四版本门禁，所以当时这张表记录的 0.9.2 四版本通过，就是最终发布的那份。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
+
+未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
+
+> **夜间变红不等于插件坏了**：它可能只是声明范围过期（例如 DSH 发布 `0.3.0-alpha.1`）。`check:release` 会把「超出声明范围（预期）」与「范围内但失败（回归）」分开报告——前者应当更新声明范围，或按上面的精确版本豁免处理，而不是当成回归去修。
+
 ## 工具清单（12 个）
 
 | 工具 | 作用 |
@@ -146,85 +308,6 @@ scout_export / scout_import  落盘持久化（五文件 + 完成标记），换
 
 两者都是**可选绑定**：宿主没有 `commands` / `skills` 服务时静默跳过，不影响插件加载与工具使用。
 
-## 安装到 DSH Profile
-
-三条已验证路径，任选其一：
-
-```sh
-# 路径 A：npm 安装（从 npm 拉取已发布的包）
-dsh plugin --profile scout-demo add dsh-scout
-
-# 路径 B：Git 安装（抓源码，会执行 prepare）
-dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
-
-# 路径 C：本地 tarball 安装（离线、可复现；门禁里跑的就是这一条）
-pnpm pack                                        # 生成 dsh-scout-0.9.2.tgz
-dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.2.tgz"
-
-# 验证工具挂载
-dsh --profile scout-demo --dump-config
-```
-
-**刚发布的版本可能暂时不会被 `latest` 选中**：pnpm ≥ 11 默认启用最小发布年龄（minimum release age）供应链保护，太新的版本会被跳过、回退到通过年龄门禁的最新版本（0.9.2 发布后立即安装曾解析到 0.9.0）。需要立刻安装某个刚发布的版本时**显式指定版本**，例如 `dsh plugin --profile <name> add dsh-scout@0.9.2`；pnpm 会把它记入 profile 的 `minimumReleaseAgeExclude`（输出里会打印 `Added 1 entry to minimumReleaseAgeExclude…`）。
-
-要求：Node ≥ 22.19。Git 安装会运行 `prepare`，pnpm 可能需要为 `dsh-scout` 显式添加 `allowBuilds`（只放行你审查过的固定版本）。
-
-### DSH 兼容性
-
-DSH 对插件的兼容性有**三个层次**，不要混为一谈：
-
-| 层次 | 位置 | 谁在执行 | 不匹配会怎样 |
-|---|---|---|---|
-| **声明** | `package.json` 的 `engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`） | 目前**没有任何代码**读取（DSH 0.2.0-rc.2 运行时不读 `engines.dsh`；官方 manifest 的注释写明 *"DSH compatibility is declarative until a reader enforces it"*） | 只表达作者意图，不拦截任何东西 |
-| **生效** | `peerDependencies` 中名字为 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围（本仓库只有 `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"` 一条） | DSH 安装检查 + profile 启动预检 `evaluatePluginCompatibility()` | 安装阶段拒绝，或启动时禁用该插件行 |
-| **不被校验** | `@deepseek-ai/cordis: ">=4.0.2 <5"`（以及 `@deepseek-ai/schemastery`） | DSH 的 peer 名字过滤只认 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | 由 pnpm 解析，DSH 不做兼容判定 |
-
-三个必须知道的细节：
-
-1. **预发布版本参与匹配。** 判定用 `semver.satisfies(runtime, range, { includePrerelease: true })`。上界写成 `<0.3.0-0` 正是为了在开启 prerelease 的前提下排除 `0.3.0-alpha` 及以后；反过来说，这条 range 的写法**依赖这个标志位**——去掉它，`0.2.0-rc.2` 会被判成不匹配。**用其它工具核对这条范围时请带上 `includePrerelease`**：按默认 semver 语义（node-semver 的预发布规则——预发布版本只被「同 major.minor.patch 元组且带预发布」的比较器接受），`0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2` 都会被判为**不满足**（semver 7.8.5 实测：`0.1.0-rc.6` 两种语义均为 true；后三者 plain=false / incl=true；`0.3.0-alpha.1` 两者均为 false）。**以 DSH 的判定为准。**
-2. **失败的形态是「静默不加载」，不是报错。** 安装时能预判的 spec（`add` 一个 registry 包）会在 pnpm 执行前直接拒绝并打印豁免命令；git / tarball spec 在安装后判定，失败会回滚 profile 清单与 lockfile。而**已经在 profile 里、启动时才发现不匹配**的插件行会被置为 disabled，本进程只在 stderr 打一行 `dsh: disabling profile plugin <row>: <reason>`——用户看到的现象是"插件没生效"（工具不在、`/scout` 不在），不是一条显眼的红色报错。
-3. **这一条 `@deepseek-ai/dsh-tools` peer 就是全部门禁。** 改 peer 范围等于改兼容承诺。
-
-#### 逃生门：profile 级精确版本豁免
-
-如果只是**声明范围过期**（例如 DSH 发了 `0.3.0-alpha.1`，而插件其实还能跑），可以不做新版本、直接在 profile 里豁免：
-
-```sh
-dsh plugin --profile <name> version-exemptions   # 查看当前豁免与运行时版本
-dsh plugin --profile <name> allow-version <package>@<version> --dsh-version <exact-dsh-version> --accept-risk
-dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <exact-dsh-version>
-```
-
-豁免记录写在 profile 目录下、与 `package.json` / `cordis.patch.yml` 并列的 `compatibility.json`（精确 `package@version` → 允许的精确 DSH 版本列表）。四条边界：
-
-- **只接受精确版本**，不接受 range；
-- 只授权「这一个包版本 + 这一个 DSH 版本」这一对，**不随插件或 DSH 升级继承**；
-- **不授权**依赖的安装脚本；
-- 生效时机是**下一次组合**：live profile 会重新组合并挂载，startup-only profile 需要重启。
-
-授予豁免需要显式风险确认（CLI 的 `--accept-risk`，插件管理器里是 `acceptRisk: true`），DSH 会在写入前打印风险警告——不兼容的插件可能崩溃或损坏数据。
-
-#### 已实测版本矩阵
-
-**`dsh-scout@0.9.2` 已在四个精确 DSH 版本上实测通过**（2026-10-13 发布前，隔离 profile，四个 binary 均从 npm 真实取用、非本机 DSH）：覆盖安装、冷启动、工具挂载、**扩展后的六步真实宿主门禁**（`scout_start` → 导出 → 冷重启 → 惰性回填 → 跨语言导入 → 卸载，外加「标记缺失 / `complete:false`」两个负向对照）和卸载。完整门禁由 `npm run check:release` 执行，实测输出：
-
-```text
-dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
-```
-
-| DSH 版本 | npm 渠道（2026-10-12 核对） | 0.9.2（已发布）结果 |
-| --- | --- | --- |
-| `0.1.0-rc.6` | 兼容范围下界 | 通过 |
-| `0.1.2-rc.1` | 旧版回归 | 通过 |
-| `0.2.0-rc.2` | `latest` / `next` | 通过 |
-| `0.2.1-alpha.2` | `alpha` | 通过 |
-
-本表此前记录过 **0.9.0** 与 **0.9.1** 候选 tarball 的结果；0.9.2 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**），只把 `@deepseek-ai/schemastery` 由 `^3.18.2` 对齐到 `~3.18.4`，并用扩展后的门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。npm 渠道那一列仍是 2026-10-12 的核对结果，本次复跑未重新核对。**0.9.2 已发布到 npm**（`dist-tags.latest` = `0.9.2`）：发布 workflow（run `38406696598`）在 `pnpm pack` 之前跑了同一道四版本门禁，所以上表验证的就是最终发布的这份 0.9.2。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
-
-未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
-
-> **夜间变红不等于插件坏了**：它可能只是声明范围过期（例如 DSH 发布 `0.3.0-alpha.1`）。`check:release` 会把「超出声明范围（预期）」与「范围内但失败（回归）」分开报告——前者应当更新声明范围，或按上面的精确版本豁免处理，而不是当成回归去修。
-
 ## 配置（可选）
 
 在 DSH profile 的 `cordis.patch.yml` 中为 `dsh-scout` 配置：
@@ -240,6 +323,7 @@ dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 ```
 
 - 相对 `scoutDir` 以**会话的 cwd** 为基准解析，不再落到 DSH 进程的当前目录；
+- **桌面 App**：`scoutDir` 的默认值 `./dsh-scout` 依赖 cwd，而桌面会话的 cwd 语义与 CLI 不同，建议在 `~/.dsh/profiles/desktop/cordis.patch.yml` 里给 `id: dsh-scout` 直接写绝对路径；该文件由 App 维护，手改前先退出 App，避免写入被覆盖；
 - `autoPersist: true` 时，每次变更后自动落盘；**失败可见**：返回值带 `persist.persisted=false` + `persist.error`，且不会写 `case_exported` 事件；
 - `language` 影响报告、面试问题、对比报告，以及 `scout_ingest` 采集草稿自动写入的说明文字（`confidenceNote` / `nextAction`）；它还会对齐案例自带、**仍是出厂默认**的文案，判定粒度不同：`decisionObjective` / `role.fitQuestion` 是**逐字段**（该字段仍是出厂默认即对齐）；精选面试问题是**按下标逐条**——长度与出厂数组相同时，该下标仍是出厂默认的条目替换为本部署语言的同下标默认值，**用户改过的那条保持原样**；长度与出厂数组不同时，整组视为用户自撰、原样保留。判定依据是「是否等于该下标的出厂默认」，不是编辑历史（把某条改回出厂原文，那条会被对齐）。与案例自带语言相同时是 no-op，默认 `zh-CN` 对既有用户零变化。另外，`case.json` 里的 `language` 是**本部署的渲染语言**，不是文件内容的语言：对齐只按这个标签判定，**不校验标签与内容是否自洽**，所以手工把 `language` 改成与内容不符的值再导入时，插件会按「语言相同」提前返回、不做校正（正常的导出 / 导入 / 升级路径不受影响：0.9.0 旧导出的 `language` 恒为 `zh-CN`，与其内容一致）。
 

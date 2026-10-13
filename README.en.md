@@ -103,6 +103,168 @@ The generated report contains:
 - **Sources**: URL-linked source list
 - **Interview questions**: suggested questions (untouched dimensions come first)
 
+## Install
+
+First decide where you run it — the two entry points install differently, and they must not be mixed:
+
+| Where you run | Target profile | How to install |
+|---|---|---|
+| **Desktop app (DeepSeek Harness)** | `desktop` | **In-app install** (the only path — see below) |
+| CLI / headless / your own profile | your profile name | `dsh plugin --profile <your-profile> add …` |
+
+### Path 0: desktop app (recommended)
+
+The desktop `desktop` profile is owned exclusively by the Electron application, so the CLI cannot manage it — `dsh plugin --profile desktop list` and `add` are both refused:
+
+```text
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+That is a hard refusal **by profile name**, so **every** `dsh plugin` subcommand against it is rejected — including `allow-version` in the compatibility section below. Install from the **sidebar → Plugins page** (install, enable, and remove all live there) instead:
+
+```sh
+dsh-scout@0.9.3
+```
+
+> Always pin the exact version. pnpm ≥ 11 enables minimum-release-age supply-chain protection by default, so a bare package name silently skips a just-released version and falls back to an older one (installing right after 0.9.2 shipped resolved to 0.9.0); with an exact version pnpm records it under the profile's `minimumReleaseAgeExclude` (it prints `Added 1 entry to …`).
+
+No restart is needed: the 12 `scout_*` tools are injected into the current session. A desktop session's cwd differs from the CLI's, so give `scoutDir` an absolute path in the profile's `cordis.patch.yml` (see "Configuration" below).
+
+### Path 1: CLI (npm, recommended)
+
+```sh
+# Replace <your-profile> with your own profile name — do not copy the example verbatim
+dsh plugin --profile <your-profile> add dsh-scout@0.9.3
+```
+
+<details>
+<summary>How do I find my profile name?</summary>
+
+There is no `dsh profile list` subcommand (`profile` is parsed as a profile name and errors), so read the directory:
+
+```sh
+ls ~/.dsh/profiles          # or $DSH_HOME/profiles
+```
+
+Every name it lists is a usable profile (e.g. `web`, or one you created). `desktop` is app-owned: any `dsh plugin` subcommand against it is refused.
+</details>
+
+**Do not copy an example name** (such as `scout-demo`) verbatim: the CLI creates and uses it without any error, so the plugin lands in a different profile and appears not to work.
+
+### Path 2: local tarball (offline / reproducible)
+
+```sh
+pnpm pack                                        # produces dsh-scout-0.9.3.tgz
+dsh plugin --profile <your-profile> add "file:$PWD/dsh-scout-0.9.3.tgz"
+```
+
+### Other install sources, and the trade-off
+
+| Source | Ships build output | Runs install scripts | Recommendation |
+|---|---|---|---|
+| npm (path 1) | yes, ships `dist/` | no (`pendingBuilds: []` measured) | **recommended** |
+| local tarball (path 2) | yes (the `pnpm pack` output) | no | offline / self-test |
+| git: `github:MaxHou-infinity/dsh-scout#v0.9.3` | no (`dist/` is not committed) | yes — `prepare` runs `tsc` and installs devDependencies | **not recommended**; only for unreleased commits |
+
+The git ref must be a **real tag or commit**: the repository has 10 tags since `v0.3.0` (`v0.3.0` … `v0.9.2`; `v0.9.1` was a local iteration and was never tagged), and this release creates `v0.9.3`. Git is also the only path that executes code: `dist/` is not committed, so it always builds locally, and pnpm may require an explicit `allowBuilds` entry for `dsh-scout` (only allow a pinned version you have reviewed).
+
+> The desktop app bundles its own node / pnpm runtime (measured: node 24.21.0 + pnpm 11.7.0), so you do **not** need Node installed; the "Node ≥ 22.19" requirement applies to the CLI / gate paths only.
+
+### Did it install? (success criteria)
+
+**Desktop app**
+
+1. **Sidebar → Plugins page**: `dsh-scout` appears under Installed; **open its detail page** — the title carries a `v0.9.3` tag, and the version lives only on this page (list cards carry only the Experimental / Problem status tags);
+2. **Settings → Built-in plugins → Plugin list**: the `dsh-scout` row carries the **Enabled** tag and the **Running** status — not **Disabled** / **Failed** / **Conditional** (this page shows **no version**);
+3. start a new turn — 12 `scout_*` tools appear in the tool list;
+4. `/scout status <caseId>` resolves and its output ends with the plugin version (`· dsh-scout 0.9.3`) — with no stderr or logs on desktop, this is the surface that proves which version actually loaded.
+
+**CLI**
+
+```sh
+# the composed tree should contain the dsh-scout layer
+dsh --profile <your-profile> --dump-config | grep -A2 'dsh-scout'
+```
+
+Being composed is **not** the same as being mounted at runtime: the reliable signal is always whether the 12 `scout_*` tools show up and whether `/scout` resolves.
+
+On a runtime mismatch the CLI disables the plugin row and writes exactly one stderr line, `dsh: disabling profile plugin <row>: <reason>` — what you see is "the plugin isn't working", not a loud red error. **The desktop app has no visible stderr** (measured: the Electron main process points fd0/fd1/fd2 at `/dev/null`, `~/Library/Logs/DeepSeek Harness/` is empty, and there is no DSH runtime log anywhere), so on desktop the only place to look is the GUI: **Settings → Built-in plugins → Plugin list** groups rows into Session plugins / Global plugins and answers "is it installed, and why isn't it working?" with the **Enabled / Disabled / Failed / Conditional** tags and the **Running / Failed to start / Waiting for dependencies / Not running** statuses (this page shows **no version**) — a row disabled at startup (a peer mismatch is one cause) shows up there as **disabled**, because the host projects it as `enabled: !entry.disabled`; the stderr line thrown into `/dev/null` already has its answer in the GUI. For which version is installed, open the plugin's detail page on the **sidebar → Plugins page** and read the `v{version}` tag.
+
+### Upgrade and uninstall
+
+```sh
+dsh plugin --profile <your-profile> add dsh-scout@<new-version>   # upgrade: target version, also pinned
+dsh plugin --profile <your-profile> remove dsh-scout              # uninstall
+```
+
+Use the **sidebar → Plugins page** on desktop to upgrade / remove. A failed install rolls back the profile manifest and lockfile.
+
+### DSH compatibility
+
+DSH compatibility has **three layers** — do not conflate them:
+
+| Layer | Where | Who enforces it | What happens on mismatch |
+|---|---|---|---|
+| **Declaration** | `package.json` → `engines.dsh` (`>=0.1.0-rc.6 <0.3.0-0`) | **Nothing reads it today** (the DSH 0.2.0-rc.2 runtime never reads `engines.dsh`; the official manifest comment says *"DSH compatibility is declarative until a reader enforces it"*) | Expresses author intent only; blocks nothing |
+| **Enforced** | The ranges in `peerDependencies` whose names are `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` (this repo has exactly one: `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"`) | DSH install checks + the profile startup preflight `evaluatePluginCompatibility()` | Install is refused, or the plugin row is disabled at startup |
+| **Not enforced** | `@deepseek-ai/cordis: ">=4.0.2 <5"` (and `@deepseek-ai/schemastery`) | DSH's peer name filter only accepts `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | Resolved by pnpm; DSH makes no compatibility judgement |
+
+Three details that matter:
+
+1. **Prereleases participate in matching.** The check is `semver.satisfies(runtime, range, { includePrerelease: true })`. The `<0.3.0-0` upper bound exists precisely to exclude `0.3.0-alpha` and later *while* prereleases are included; conversely, **the range depends on that flag** — without it, `0.2.0-rc.2` would be judged incompatible. **When checking this range with other tooling, pass `includePrerelease`**: under default semver semantics (node-semver's prerelease rule accepts a prerelease only through a comparator with the same major.minor.patch tuple), `0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2` are all judged **unsatisfied** (measured with semver 7.8.5: `0.1.0-rc.6` is true under both semantics; the other three are plain=false / incl=true; `0.3.0-alpha.1` is false under both). **DSH's verdict is the one that counts.**
+2. **The failure mode is "silently not loaded", not an error.** Specs that can be judged up front (adding a registry package) are refused before pnpm runs, with the exemption command printed. Git / tarball specs are judged after installation, and a failure rolls back the profile manifest and lockfile. But a plugin **already in the profile whose mismatch is only discovered at startup** has its row disabled: the process writes exactly one stderr line, `dsh: disabling profile plugin <row>: <reason>`. What the user sees is "the plugin isn't working" (no tools, no `/scout`) — not a loud red error. **That line is visible to CLI users only**; the desktop app's stderr goes to `/dev/null` and there is no runtime log (see "Did it install?" above), so on desktop the state is only visible in **Settings → Built-in plugins → Plugin list** (the installed version, in turn, only on the **sidebar → Plugins page**).
+3. **That single `@deepseek-ai/dsh-tools` peer carries the entire gate.** Changing the peer range changes the compatibility promise.
+
+#### Escape hatch: profile-level exact-version exemptions
+
+If only the **declared range has expired** (say DSH publishes `0.3.0-alpha.1` while the plugin still runs fine), you can exempt it in the profile instead of shipping a new version:
+
+```sh
+dsh plugin --profile <name> version-exemptions   # inspect current exemptions and the runtime version
+dsh plugin --profile <name> allow-version <package>@<version> --dsh-version <exact-dsh-version> --accept-risk
+dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <exact-dsh-version>
+```
+
+The exemption lives in the profile's `compatibility.json`, beside `package.json` and `cordis.patch.yml` (exact `package@version` → list of exact DSH versions). Four boundaries:
+
+- **Exact versions only** — ranges are rejected;
+- it authorizes **one package version paired with one DSH version**, and is **not inherited** by plugin or DSH upgrades;
+- it does **not** authorize dependency install scripts;
+- it takes effect on the **next composition**: a live profile recomposes and mounts it, a startup-only profile needs a restart.
+
+Granting requires explicit risk acceptance (CLI `--accept-risk`, plugin manager `acceptRisk: true`); DSH prints a risk warning before writing — an incompatible plugin may crash or corrupt data.
+
+**Desktop app users**: `allow-version` is refused by profile name like every other `dsh plugin` subcommand, so this file must be written by hand. It is a flat JSON object — exact `package@version` → the exact DSH versions it is allowed on; with a desktop runtime of `0.2.0-rc.2`:
+
+```json
+{
+  "dsh-scout@0.9.3": ["0.2.0-rc.2"]
+}
+```
+
+A hand-written grant is bound by the same four boundaries above (exact versions only, one package version paired with one DSH version, no authorization of install scripts, effective on the next composition) and it **bypasses the CLI's `--accept-risk` acknowledgement** — an incompatible plugin may crash or corrupt data. Read the exact runtime version from `desktopVersion` in `~/.dsh/dsh-runtimes/*/runtime.json`; a malformed record is ignored with a warning and never makes the profile unusable.
+
+#### Verified version matrix
+
+**The `dsh-scout@0.9.3` candidate tarball passed on four exact DSH versions** (before this release, 2026-10-13, isolated profiles, all four binaries fetched from npm rather than the local DSH): covering installation, cold startup, tool mounting, the **six-step real-host gate** (`scout_start` → export → cold restart → lazy rehydration → cross-language import → uninstall, plus the "marker missing / `complete:false`" negative controls), and unload. The full gate runs through `npm run check:release`; measured output:
+
+```text
+dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
+```
+
+| DSH version | npm channel (checked 2026-10-12) | 0.9.3 (candidate tarball) |
+| --- | --- | --- |
+| `0.1.0-rc.6` | Declared lower bound | Pass |
+| `0.1.2-rc.1` | Older release regression | Pass |
+| `0.2.0-rc.2` | `latest` / `next` | Pass |
+| `0.2.1-alpha.2` | `alpha` | Pass |
+
+This table previously recorded the **0.9.0** and **0.9.1** candidate tarball results; 0.9.3 keeps the identical `peerDependencies` and `engines.dsh` ranges (**unchanged**) — this version changes the install docs and the diagnostic surface (the desktop-app path in the install chapter, the README version-reference guard, and the plugin version in `/scout status`), not dependencies or the runtime contract — and it passed the same gate again on the same four exact versions (4/4), so the table is updated to this version. The npm-channel column is still the 2026-10-12 check; this re-run did not re-check it. The previous release, **0.9.2, is published on npm** (`dist-tags.latest` = `0.9.2`): the release workflow (run `38406696598`) ran the same four-version gate before `pnpm pack`, so the 0.9.2 four-version pass this table recorded at the time is the exact artifact that shipped. The `/scout` command and Skill added in 0.9.1 are optional bindings, skipped silently on hosts without the corresponding services, so they do not affect loading.
+
+Future `0.2.x` versions still require runtime verification. The [nightly compatibility workflow](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml) resolves npm's `latest`, `next`, and `alpha` tags to exact versions before running tests and the isolated profile check. The badge shows the latest workflow result; this table records versions already verified.
+
+> **A red nightly does not mean the plugin is broken**: it may simply mean the declared range expired (e.g. DSH published `0.3.0-alpha.1`). `check:release` reports "out of declared range (expected)" separately from "in range but failing (regression)" — the former calls for updating the range or using the exact-version exemption above, not for a regression fix.
+
 ## Tools (12)
 
 | Tool | Purpose |
@@ -146,85 +308,6 @@ Usage (identical to the implementation):
 
 Both are **optional bindings**: when the host exposes no `commands` / `skills` service they are skipped silently, and plugin loading plus tools are unaffected.
 
-## Install into a DSH profile
-
-Three verified paths:
-
-```sh
-# Path A: npm install (fetches the published package from npm)
-dsh plugin --profile scout-demo add dsh-scout
-
-# Path B: git install (fetches source, runs prepare)
-dsh plugin --profile scout-demo add github:MaxHou-infinity/dsh-scout#<commit>
-
-# Path C: local tarball (offline, reproducible; this is the exact form the gate runs)
-pnpm pack                                        # produces dsh-scout-0.9.2.tgz
-dsh plugin --profile scout-demo add "file:$PWD/dsh-scout-0.9.2.tgz"
-
-# Verify the mounted tools
-dsh --profile scout-demo --dump-config
-```
-
-**A just-released version may not be picked up by `latest` yet**: pnpm ≥ 11 enables minimum-release-age supply-chain protection by default, so too-new versions are skipped and pnpm falls back to the newest version that passes the age gate (installing right after 0.9.2 shipped resolved to 0.9.0). To install a just-released version immediately, **pin it explicitly**, e.g. `dsh plugin --profile <name> add dsh-scout@0.9.2`; pnpm records it under the profile's `minimumReleaseAgeExclude` (the output prints `Added 1 entry to minimumReleaseAgeExclude…`).
-
-Requirements: Node ≥ 22.19. A git install runs `prepare`; pnpm may require an explicit `allowBuilds` entry for `dsh-scout` (only allow a pinned source you have reviewed).
-
-### DSH compatibility
-
-DSH compatibility has **three layers** — do not conflate them:
-
-| Layer | Where | Who enforces it | What happens on mismatch |
-|---|---|---|---|
-| **Declaration** | `package.json` → `engines.dsh` (`>=0.1.0-rc.6 <0.3.0-0`) | **Nothing reads it today** (the DSH 0.2.0-rc.2 runtime never reads `engines.dsh`; the official manifest comment says *"DSH compatibility is declarative until a reader enforces it"*) | Expresses author intent only; blocks nothing |
-| **Enforced** | The ranges in `peerDependencies` whose names are `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` (this repo has exactly one: `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"`) | DSH install checks + the profile startup preflight `evaluatePluginCompatibility()` | Install is refused, or the plugin row is disabled at startup |
-| **Not enforced** | `@deepseek-ai/cordis: ">=4.0.2 <5"` (and `@deepseek-ai/schemastery`) | DSH's peer name filter only accepts `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | Resolved by pnpm; DSH makes no compatibility judgement |
-
-Three details that matter:
-
-1. **Prereleases participate in matching.** The check is `semver.satisfies(runtime, range, { includePrerelease: true })`. The `<0.3.0-0` upper bound exists precisely to exclude `0.3.0-alpha` and later *while* prereleases are included; conversely, **the range depends on that flag** — without it, `0.2.0-rc.2` would be judged incompatible. **When checking this range with other tooling, pass `includePrerelease`**: under default semver semantics (node-semver's prerelease rule accepts a prerelease only through a comparator with the same major.minor.patch tuple), `0.1.2-rc.1` / `0.2.0-rc.2` / `0.2.1-alpha.2` are all judged **unsatisfied** (measured with semver 7.8.5: `0.1.0-rc.6` is true under both semantics; the other three are plain=false / incl=true; `0.3.0-alpha.1` is false under both). **DSH's verdict is the one that counts.**
-2. **The failure mode is "silently not loaded", not an error.** Specs that can be judged up front (adding a registry package) are refused before pnpm runs, with the exemption command printed. Git / tarball specs are judged after installation, and a failure rolls back the profile manifest and lockfile. But a plugin **already in the profile whose mismatch is only discovered at startup** has its row disabled: the process writes exactly one stderr line, `dsh: disabling profile plugin <row>: <reason>`. What the user sees is "the plugin isn't working" (no tools, no `/scout`) — not a loud red error.
-3. **That single `@deepseek-ai/dsh-tools` peer carries the entire gate.** Changing the peer range changes the compatibility promise.
-
-#### Escape hatch: profile-level exact-version exemptions
-
-If only the **declared range has expired** (say DSH publishes `0.3.0-alpha.1` while the plugin still runs fine), you can exempt it in the profile instead of shipping a new version:
-
-```sh
-dsh plugin --profile <name> version-exemptions   # inspect current exemptions and the runtime version
-dsh plugin --profile <name> allow-version <package>@<version> --dsh-version <exact-dsh-version> --accept-risk
-dsh plugin --profile <name> revoke-version <package>@<version> --dsh-version <exact-dsh-version>
-```
-
-The exemption lives in the profile's `compatibility.json`, beside `package.json` and `cordis.patch.yml` (exact `package@version` → list of exact DSH versions). Four boundaries:
-
-- **Exact versions only** — ranges are rejected;
-- it authorizes **one package version paired with one DSH version**, and is **not inherited** by plugin or DSH upgrades;
-- it does **not** authorize dependency install scripts;
-- it takes effect on the **next composition**: a live profile recomposes and mounts it, a startup-only profile needs a restart.
-
-Granting requires explicit risk acceptance (CLI `--accept-risk`, plugin manager `acceptRisk: true`); DSH prints a risk warning before writing — an incompatible plugin may crash or corrupt data.
-
-#### Verified version matrix
-
-**`dsh-scout@0.9.2` passed on four exact DSH versions** (before the 2026-10-13 release, isolated profiles, all four binaries fetched from npm rather than the local DSH): covering installation, cold startup, tool mounting, the **extended six-step real-host gate** (`scout_start` → export → cold restart → lazy rehydration → cross-language import → uninstall, plus the "marker missing / `complete:false`" negative controls), and unload. The full gate runs through `npm run check:release`; measured output:
-
-```text
-dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
-```
-
-| DSH version | npm channel (checked 2026-10-12) | 0.9.2 (released) |
-| --- | --- | --- |
-| `0.1.0-rc.6` | Declared lower bound | Pass |
-| `0.1.2-rc.1` | Older release regression | Pass |
-| `0.2.0-rc.2` | `latest` / `next` | Pass |
-| `0.2.1-alpha.2` | `alpha` | Pass |
-
-This table previously recorded the **0.9.0** and **0.9.1** candidate tarball results; 0.9.2 keeps the identical `peerDependencies` and `engines.dsh` ranges (**unchanged**), aligns only `@deepseek-ai/schemastery` from `^3.18.2` to `~3.18.4`, and passed the matrix again on the same four exact versions under the extended gate (4/4), so it is updated to this version. The npm-channel column is still the 2026-10-12 check; this re-run did not re-check it. **0.9.2 is published on npm** (`dist-tags.latest` = `0.9.2`): the release workflow (run `38406696598`) ran the same four-version gate before `pnpm pack`, so the table verifies the exact 0.9.2 that shipped. The `/scout` command and Skill added in 0.9.1 are optional bindings, skipped silently on hosts without the corresponding services, so they do not affect loading.
-
-Future `0.2.x` versions still require runtime verification. The [nightly compatibility workflow](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml) resolves npm's `latest`, `next`, and `alpha` tags to exact versions before running tests and the isolated profile check. The badge shows the latest workflow result; this table records versions already verified.
-
-> **A red nightly does not mean the plugin is broken**: it may simply mean the declared range expired (e.g. DSH published `0.3.0-alpha.1`). `check:release` reports "out of declared range (expected)" separately from "in range but failing (regression)" — the former calls for updating the range or using the exact-version exemption above, not for a regression fix.
-
 ## Configuration (optional)
 
 Configure `dsh-scout` in the DSH profile's `cordis.patch.yml`:
@@ -240,6 +323,7 @@ Configure `dsh-scout` in the DSH profile's `cordis.patch.yml`:
 ```
 
 - A relative `scoutDir` resolves against the **session cwd**, not the DSH process cwd;
+- **Desktop app**: the default `scoutDir` (`./dsh-scout`) depends on cwd, and a desktop session's cwd differs from the CLI's, so give `id: dsh-scout` an absolute path in `~/.dsh/profiles/desktop/cordis.patch.yml`; the app maintains that file, so quit the app before editing it, or the write may be overwritten;
 - With `autoPersist: true`, every mutation persists automatically; **failures are visible**: the return value carries `persist.persisted=false` plus `persist.error`, and no `case_exported` event is written;
 - `language` affects the report, interview questions, the comparison report, and the explanatory text that `scout_ingest` writes into auto-drafted claims (`confidenceNote` / `nextAction`); it also aligns case-owned text that is **still at its factory default**, at two different granularities: `decisionObjective` / `role.fitQuestion` are decided **per field** (a field still at its factory default is aligned); curated interview questions are decided **entry by entry, by index** — when the set has the factory length, an entry still equal to its factory slot is replaced by this deployment's default at the same index and **an entry the user edited is kept verbatim**; a set whose length differs from the factory array is taken as fully user-authored and preserved as a whole. The test is "does this entry equal its factory slot", not edit history (editing an entry back to the factory text makes it align). It is a no-op when it matches the case's own language, so the `zh-CN` default changes nothing for existing users. Separately, `language` in `case.json` is the **rendering language of this deployment**, not the language of the file's contents: alignment reads only that label and **never checks whether the label is consistent with the content**, so a hand-edited file whose `language` disagrees with its prose is taken at its word and skipped by the "same language" early return (the normal export / import / upgrade paths are unaffected: a 0.9.0 export always says `zh-CN`, matching its content).
 

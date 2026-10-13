@@ -23,7 +23,11 @@
  *   7. lazy rehydration from `<scoutDir>/<caseId>/`, including the case-id guard
  *      that stops an export of another case being adopted;
  *   8. `language: 'en'` end to end (including the persisted `report.md`) and the
- *      unchanged `zh-CN` byte shape.
+ *      unchanged `zh-CN` byte shape;
+ *   9. the release literal, pinned in three independent places at once: the
+ *      exported `PLUGIN_VERSION` constant, `package.json`, and the `/scout status`
+ *      line — the one surface that can name the version, because reaching it
+ *      already proves the plugin loaded.
  *
  * Round 1 of this suite pinned six defects as *characterization* tests; round 2
  * pinned a seventh as a *documented boundary* (`D10`). All seven were fixed and
@@ -45,8 +49,9 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
-import { Config, apply } from '../dist/index.js'
+import { Config, PLUGIN_VERSION, apply } from '../dist/index.js'
 import { CLAIM_DIMENSIONS, EXPORT_FILE_NAMES, scoutStrings } from '../dist/model.js'
 
 /* ------------------------------------------------------------------ *
@@ -1681,4 +1686,59 @@ test('the /scout command exposes four working sub-actions and the scout Skill ca
   assert.match((await invoke('bogus cmd')).text, /Unknown \/scout action: bogus/)
   assert.equal((await invoke('status missing')).kind, 'error')
   assert.match((await invoke('status missing')).text, /Unknown case: missing/)
+})
+
+/* ------------------------------------------------------------------ *
+ * 11b. T-C · the loaded version, stated where a user can actually read it
+ *
+ * A load-time version banner was implemented, measured against a real
+ * `dsh --profile` boot, and rejected: cordis' only built-in exporter writes to
+ * an in-memory ring buffer, so `ctx.logger(name).info(...)` reaches no DSH
+ * surface at all (stdout and stderr both stayed byte-empty while direct writes
+ * from the same plugin appeared on both), nothing in DSH reads that buffer, and
+ * in the desktop App the host's stdout is piped to `/dev/null` while its stderr
+ * is kept only as a 64 KiB tail used when the host dies. A plugin that a peer
+ * conflict disabled never runs at all, so it can log nothing either way.
+ *
+ * `/scout status` is therefore the one honest place: reaching that branch
+ * already proves this exact version is the one that loaded.
+ * ------------------------------------------------------------------ */
+
+test('T-C · one release literal across the exported constant, package.json and /scout status', async () => {
+  // Hardcoded on purpose, mirroring `RELEASE_VERSION` in tests/package.test.mjs:
+  // reading the version back out of package.json and comparing it to itself
+  // would assert nothing. This literal is the third, independent statement, so a
+  // bump that updates the manifest but forgets the constant (or vice versa)
+  // fails here instead of shipping a mislabelled build.
+  const RELEASE_VERSION = '0.9.3'
+
+  assert.equal(PLUGIN_VERSION, RELEASE_VERSION, 'the exported constant must be the release literal')
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(manifest.version, RELEASE_VERSION, 'package.json must carry the same release literal')
+
+  const commands = []
+  const harness = createHarness()
+  harness.ctx.mount('commands', { register: definition => { commands.push(definition); return () => {} } })
+  await call(
+    harness,
+    'scout_start',
+    { caseId: 'ver', companyName: 'Version Co', roleTitle: 'HR Head', location: '' },
+    execFor('version-session'),
+  )
+
+  const invoke = rawInput => commands[0].handler({ rawInput, agent: { id: 'version-session' } })
+  const status = await invoke('status ver')
+  assert.equal(status.kind, 'success')
+  assert.ok(
+    status.text.endsWith(` · dsh-scout ${RELEASE_VERSION}`),
+    `status must end with the loaded version, got: ${status.text}`,
+  )
+  // Trailing, so the case facts remain the leading, greppable part of the line.
+  assert.match(
+    status.text,
+    /^\[ver\] VERIFY · identity needs_verification · sources 0 \/ claims 0 \(verified 0, open 0\) /,
+  )
+  // The version belongs to the plugin, not to the case: no other sub-action
+  // states it, and the usage line stays byte-identical.
+  assert.equal((await invoke('')).text, 'usage: /scout status <caseId> | /scout questions <caseId> | /scout report <caseId> | /scout export <caseId> [targetDir]')
 })

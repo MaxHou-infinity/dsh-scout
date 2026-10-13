@@ -16,13 +16,15 @@
 
 0.9.1 明确不做的事见 [CHANGELOG](../CHANGELOG.md)：client 面板、自造 session event、`ctx.storageDomain` 持久化重写、评分与排名（0.9.2 沿用同一非目标）。
 
-**v0.9.2（当前版本）**是收口版本：把 0.9.1 验证报告点名的最大盲区（U11）补成真实宿主门禁，并清掉三轮独立验证留下的文档税。本版本**不新增工具、不新增命令、不新增 Skill 条目**：
+**v0.9.2**是收口版本：把 0.9.1 验证报告点名的最大盲区（U11）补成真实宿主门禁，并清掉三轮独立验证留下的文档税。本版本**不新增工具、不新增命令、不新增 Skill 条目**：
 
 - **F2 · 真实宿主端到端门禁（关闭 U11）**：`scripts/profile-smoke.mjs` 扩展为六步真实宿主场景链——创建 → 导出 → 冷重启 → 惰性回填 → 跨语言导入 → 卸载，另加完成标记「缺失 / `complete:false`」两条负向对照；四版本矩阵在扩展后的门禁下 4/4 通过。**仍未覆盖**：真实 LLM / agent loop 与 approval 策略、相对路径、`autoPersist`、真实进程中断，以及其余 6 个工具（仅断言注册）。
 - **F1 · 面试问题按下标逐条对齐（关闭 D10）**：精选面试问题由「整组 all-or-nothing」改为按下标逐条——长度与出厂数组相同时逐条替换，用户改过的那条保持原样；长度不同则整组原样保留。默认行为对**未编辑**场景零变化。
 - **F5 · render 整串上限加固（关闭 O10）**：整串（含省略号）不超过 1024 B，裁切预算由省略号自身的 UTF-8 长度推导（不再依赖手写余量）。
 - **F4 · 依赖对齐**：`@deepseek-ai/schemastery` 由 `^3.18.2` 改为 `~3.18.4`，与宿主系列一致；`peerDependencies` 与 `engines.dsh` 范围不变。
 - **已知边界 G1（有意不修，推迟 0.10.0）**：冷启动惰性回填会把决策理由措辞由初始文案换成 `decisionReasons.identity`（并补 `decisionReasonCode`），`decision` 不变；详见 [0.9.2 门禁发现](dsh-scout-0.9.2-gate-findings.md)（仓库文档，不在 npm 包内）。
+
+**v0.9.3（当前版本）**不改运行时契约，主题是**安装体验**：此前 README 的三条「已验证路径」全是 `dsh plugin --profile <name> add …`，而桌面 App 的 `desktop` profile 被 Electron 应用独占，桌面用户第一步就撞墙——0.9.3 把「App 内安装」写成主路径，并给安装补上可执行判据。安装模型、分发源取舍与兼容性豁免见 §5.3；桌面路径的手工验收见 [安装验收 checklist](install-verification.md)（仓库文档，不在 npm 包内）；评审原件见 [安装评审](dsh-scout-install-ux-review.md)（同上）。本版本**不新增工具、命令或 Skill 条目**。
 
 ## 1. 产品承诺
 
@@ -122,6 +124,23 @@ scout-cases/<case-id>/
 | 把「尽调方法」交给模型 | `ctx.skills.register({ name, description, content, … })`——无需落文件、无需 client bundle，卸载即消失 | 0.9.1 |
 
 > 一句话规则：**不要自造 session event。** 用户显式动作走 `command/run` + `command/done`，结构化 UI 载荷走 `output.presentationMeta` → `tool/result.meta`，持久状态走 `ctx.storageDomain`。
+
+### 5.3 安装与分发模型（0.9.3）
+
+两条入口，安装方式不同，不要混用：
+
+| 你在哪运行 | 目标 profile | 安装方式 |
+| --- | --- | --- |
+| 桌面 App（DeepSeek Harness） | `desktop` | **侧边栏 → 插件页**（唯一路径） |
+| CLI / headless / 自建 profile | 你自己的 profile 名 | `dsh plugin --profile <your-profile> add dsh-scout@<exact-version>` |
+
+- **`desktop` 由应用独占**：CLI 对它的**所有** `dsh plugin` 子命令都在参数解析层按 profile 名拒绝（`rejectElectronProfile`，`error: profile "desktop" is managed exclusively by the Electron application`），连兼容性逃生门 `allow-version` 一起拒绝。所以桌面场景既没有 CLI 判据，也没有可脚本化的自动化门禁——这正是 0.9.2 及以前的门禁盲区。
+- **spec 一律写精确版本**：pnpm ≥ 11 默认启用最小发布年龄（minimum release age）供应链保护，裸包名会把刚发布的版本静默跳过、回退到旧版；写精确版本后 pnpm 会把它记入 profile 的 `minimumReleaseAgeExclude`。
+- **分发源与代价**：npm（自带 `dist/`，不跑安装脚本，**推荐**）、本地 tarball（离线 / 自测）、git（仓库不含 `dist/`，`prepare` 会跑 `tsc` 并安装 devDependencies——**不推荐**，只在需要未发布提交时使用，ref 写真实 tag 如 `#v0.9.3`）。git 是唯一会执行代码的路径。
+- **Node 适用范围**：`engines.node >= 22.19` 只对 CLI / 门禁路径成立；桌面 App 自带运行时（实测 node 24.21.0 + pnpm 11.7.0），无需安装 Node。
+- **成功判据与排障面（两个 GUI 面，别混）**：**侧边栏 → 插件页**是**管理面**，回答「装的是哪版」——`dsh-scout` 在「已安装」里，**详情页**标题旁带 `v{version}`（`BundleInfo.version`），安装 / 启用 / 停用 / 移除都在这里；**设置 → 内置插件 → 插件列表**是**只读检查面**，回答「装没装 / 为什么没生效」——该行**已启用 + 运行中**（不是**已停用** / **启动失败** / **条件启用**），按「会话插件 / 全局插件」分组，**不显示版本号**（wire 行只有 `{ entryId, moduleName, meta?, enabled, fiberPhase }`）。再加上新开一轮对话是否出现 12 个 `scout_*` 工具、`/scout status <caseId>` 是否命中且输出末尾带 `· dsh-scout <version>`。CLI 的 `--dump-config` 只证明「组合进去了」，**不等于**运行时挂上了——不匹配时插件行被置为 disabled，且**这一行只对 CLI 用户可见**（stderr 打 `dsh: disabling profile plugin <row>: <reason>`）。桌面 App 没有可见 stderr、没有运行日志（实测 Electron 主进程的 fd0/fd1/fd2 指向 `/dev/null`，日志目录为空），插件被 disabled 时它自己不可能输出任何东西——但**答案就在 GUI 里**：启动时被禁用的行会被投影成插件列表里的「已停用」（宿主侧 `enabled: !entry.disabled`，`dsh-host-plugin-inventory/lib/index.js:131`），所以插件列表是桌面唯一的排障入口。
+- **版本豁免（桌面手动路径）**：桌面用户用不了 `allow-version`，需要在 `~/.dsh/profiles/desktop/compatibility.json` 手写豁免——平铺 JSON：精确 `package@version` → 允许的精确 DSH 版本数组，例如 `{ "dsh-scout@0.9.3": ["0.2.0-rc.2"] }`。与工具 / CLI 写入的是同一组边界：只接受精确版本、只授权「这一个包版本 + 这一个 DSH 版本」这一对、不随升级继承、不授权依赖安装脚本、下一次组合生效；手写绕过 `acceptRisk` 风险确认，写法不合规的记录会被忽略并告警（不会让 profile 不可用）。
+- **验收**：桌面路径由发版前手工 checklist 覆盖（`docs/install-verification.md`：Lane D 桌面 App / Lane C CLI，含两条 lane 的差异与触发时机，仓库文档、不在 npm 包内）；CLI 自动化仍是 `npm run test:profile` 的六步链与 `npm run check:release` 的四版本矩阵。
 
 ## 6. 明确非目标
 

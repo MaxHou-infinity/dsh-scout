@@ -24,6 +24,13 @@
  *                           `DSH_VERSIONS=0.2.0-rc.2 node scripts/check-release.mjs`)
  *   DSH_ALLOW_OUT_OF_RANGE  `1` downgrades out-of-range failures to warnings
  *
+ * README preflight (P2-4): the READMEs pin the released version in their install
+ * commands and artifact names, and nothing used to check them. The primary guard
+ * lives in `tests/package.test.mjs` (it runs on every `npm test` and in CI, in
+ * milliseconds); this gate repeats the check as an independent second
+ * implementation so a stale README fails in milliseconds instead of after the
+ * whole unit suite and the ~2 minute four-version profile matrix below.
+ *
  * SemVer semantics (do NOT "fix" this matcher): this script has no runtime
  * dependency, so it carries a small comparator-set matcher that mirrors
  * node-semver's `{ includePrerelease: true }` mode — the exact mode DSH uses to
@@ -195,6 +202,227 @@ console.log(`  declared engines.dsh: ${declaredRange === '' ? '(none declared �
 console.log('  range semantics: node-semver includePrerelease:true (mirrors dsh-app-boot evaluatePluginCompatibility:300)')
 console.log(`  profile matrix: ${versions.join(', ')} (${source})`)
 console.log(`  out-of-range failures: ${ALLOW_OUT_OF_RANGE ? 'warn only (DSH_ALLOW_OUT_OF_RANGE=1)' : 'fatal, reported as OUT OF DECLARED RANGE'}`)
+
+// --- README release-reference preflight (see the module doc) ------------------
+//
+// Deliberately a second, simpler implementation of the guard in
+// tests/package.test.mjs rather than a shared import: tests are not a library, and
+// this one has to fail before the expensive work below. Same rule as that guard -
+// only install/artifact references are checked: `dsh-scout-<v>.tgz`, the
+// `dsh-scout@<v>` pin in its three live forms (install operand, alone on its
+// line, or a quoted version key), the ` · dsh-scout <v>` status banner, a
+// `#v<v>` git ref, and the phrase-anchored `本次发布创建 \`v<v>\`` /
+// `this release creates \`v<v>\`` tag claim. Historical mentions in the
+// verified-version matrix, the roadmap, and release prose are left alone.
+// 0.9.3 freezes this rule set: a new version-reference style is evaluated in the
+// change that introduces it, not by widening this list indefinitely.
+const README_FILES = ['README.md', 'README.en.md']
+const README_SEMVER = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`
+/** An exact specifier: `1.2.3` or `v1.2.3`. */
+const README_EXACT_SPECIFIER = new RegExp(`^v?(${README_SEMVER})$`)
+/**
+ * A specifier naming a version *or a range* (`0.9`, `0.9.x`, `^0.9.2`, `>=0.9.2`,
+ * `=0.9.2`, `*`). Ranges are live references node-semver satisfies, but this
+ * preflight carries no range semantics, so it fails closed rather than waving
+ * them through (F-1). Dist-tags and placeholders name no version and stay valid.
+ */
+const README_VERSION_OR_RANGE = /^[\^~<>=|\s]*(?:v?\d|\*|x)/i
+/** Exact version, unsupported specifier, or not a version claim at all. */
+const classifySpecifier = token => {
+  const exact = README_EXACT_SPECIFIER.exec(token)
+  if (exact !== null) return { version: exact[1] }
+  if (README_VERSION_OR_RANGE.test(token)) {
+    return {
+      problem:
+        `uses the unsupported specifier "${token}"; a range or comparison cannot be compared to ` +
+        'the released version - write the exact version, or extend README_REFERENCE_PATTERNS ' +
+        'with the semantics of this form',
+    }
+  }
+  return null
+}
+const README_REFERENCE_PATTERNS = [
+  {
+    kind: 'tarball name',
+    pattern: new RegExp(`dsh-scout-(${README_SEMVER})\\.tgz`, 'g'),
+    classify: match => ({ version: match[1] }),
+  },
+  {
+    kind: 'npm install pin',
+    // Token charset excludes sentence punctuation, so `dsh-scout@0.9.3。` still
+    // reads as an exact pin while `dsh-scout@^0.9.2` is captured whole.
+    pattern: new RegExp('dsh-scout@([0-9A-Za-z.*^~<>=|+-]+)', 'g'),
+    classify: (match, line) => {
+      const before = line.slice(0, match.index)
+      const after = line.slice(match.index + match[0].length)
+      // the operand of an install verb ...
+      const livePosition =
+        /(?:^|[\s`'"(])(?:add|install|dlx|i)\s+(?:--?[\w-]+(?:=\S+)?\s+)*(?:file:)?$/.test(before.replace(/[`"')\]]+$/, '')) ||
+        // ... a specifier alone on its line (the desktop app's plugin field) ...
+        (before.replace(/^[\s>]*(?:[-*+]\s+)?/, '') === '' && after.replace(/[`"')\]]+$/, '').trim() === '') ||
+        // ... or a quoted `"package@version"` key (compatibility.json).
+        (/["']$/.test(before) && /^["']\s*:/.test(after))
+      return livePosition ? classifySpecifier(match[1]) : null
+    },
+  },
+  {
+    kind: 'git install ref',
+    pattern: new RegExp(`dsh-scout(?:\\.git)?#v?(${README_SEMVER})`, 'g'),
+    classify: match => ({ version: match[1] }),
+  },
+  {
+    // ` · dsh-scout <v>` - the /scout status banner (src/index.ts appends
+    // ` · dsh-scout ${PLUGIN_VERSION}`); the separator is required so that prose
+    // and report titles naming the package next to a version are not pins.
+    kind: 'status banner',
+    pattern: new RegExp(`·\\s*dsh-scout (${README_SEMVER})`, 'g'),
+    classify: match => ({ version: match[1] }),
+  },
+  {
+    // `本次发布创建 \`v<v>\`` / `this release creates \`v<v>\`` - the tag this
+    // release creates. The phrase is what makes a bare `v<semver>` safe to guard
+    // here: the same line also lists historical tags (`v0.3.0` ... `v0.9.2`).
+    kind: 'release tag claim',
+    pattern: new RegExp(`(?:本次发布创建|this release creates)\\s*\`?v?(${README_SEMVER})\`?`, 'g'),
+    classify: match => ({ version: match[1] }),
+  },
+]
+const expectedVersion = packageJson.version
+const staleReferences = []
+const reportedLines = new Set()
+const anchorFailures = []
+const releaseTagClaimFiles = new Set()
+let readmeReferenceCount = 0
+for (const file of README_FILES) {
+  const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+  text.split('\n').forEach((line, lineIndex) => {
+    for (const { kind, pattern, classify } of README_REFERENCE_PATTERNS) {
+      pattern.lastIndex = 0
+      let match
+      while ((match = pattern.exec(line)) !== null) {
+        const verdict = classify(match, line)
+        if (verdict === null) continue
+        if (kind === 'release tag claim') releaseTagClaimFiles.add(file)
+        readmeReferenceCount += 1
+        if (verdict.problem !== undefined) {
+          staleReferences.push(`${file}:${lineIndex + 1} ${match[0]} ${verdict.problem} (${kind})`)
+          // Only *offending* lines are deduped, so the section scan below still
+          // sees a stale bare token on a line that also carries a correct pin
+          // (F-3): this matches guardFailures() in tests/package.test.mjs.
+          reportedLines.add(`${file}:${lineIndex + 1}`)
+        } else if (verdict.version !== expectedVersion) {
+          staleReferences.push(
+            `${file}:${lineIndex + 1} pins ${match[0]} but package.json is ${expectedVersion} (${kind})`,
+          )
+          reportedLines.add(`${file}:${lineIndex + 1}`)
+        }
+      }
+    }
+  })
+}
+
+// The release-tag claim is phrase-anchored, so rewording the sentence would stop
+// guarding it silently. Asserted per file: a rule that can no longer match
+// anything is the false green this preflight exists to prevent.
+for (const file of README_FILES) {
+  if (!releaseTagClaimFiles.has(file)) {
+    anchorFailures.push(
+      `${file}: no "release tag claim" reference matched - either the sentence that creates the ` +
+        'release tag was reworded (update the phrase in README_REFERENCE_PATTERNS here and in ' +
+        'tests/package.test.mjs) or it was removed (retire this rule deliberately with the docs owner)',
+    )
+  }
+}
+
+// --- success-criteria section scan (T-G) --------------------------------------
+//
+// The success-criteria section says how to confirm that *this* release is the one
+// that loaded, so every version token inside it must be the released version -
+// including the bare forms the pattern scan above cannot claim safely (the card's
+// `v0.9.3` tag, `and version `0.9.3``), because a bare `v<semver>` elsewhere is
+// legitimate history (the release-history line lists `v0.3.0` ... `v0.9.2`).
+//
+// The anchors are explicit and a miss is a FAILURE, never a skip: a silently
+// skipped section would let a reworded heading disarm the guard, which is exactly
+// the false green this preflight exists to prevent.
+const SECTION_ANCHORS = [
+  { file: 'README.md', heading: /^(#{2,4})\s*装上了吗（成功判据）$/, label: '装上了吗（成功判据）' },
+  { file: 'README.en.md', heading: /^(#{2,4})\s*Did it install\? \(success criteria\)$/, label: 'Did it install? (success criteria)' },
+]
+// `@` is deliberately not excluded: a prose reference inside the section such as
+// `` 安装 `dsh-scout@0.9.2` 后 `` names a version the pattern scan does not claim
+// (it is not in an install position) and the section contract still covers it
+// (F-2). `-` stays excluded so a tarball name is left to the pattern scan.
+const SECTION_VERSION_TOKEN = /(?<![\w./-])v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?![\w.-])/g
+const SECTION_ANCHOR_REMEDY =
+  'the success-criteria heading was reworded or moved: update SECTION_ANCHORS here and ' +
+  'SUCCESS_CRITERIA_SECTIONS in tests/package.test.mjs. This preflight must never skip it silently.'
+let sectionTokenCount = 0
+/** Section body bounds for one heading anchor; null when the anchor no longer matches. */
+const sectionBounds = (lines, heading) => {
+  let fenced = false
+  let start = -1
+  let level = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim()
+    // A `# ...` shell comment inside the section's fenced CLI example is body
+    // text, not a heading, so fences are tracked while looking for the end.
+    if (/^(?:```|~~~)/.test(trimmed)) {
+      fenced = !fenced
+      continue
+    }
+    if (fenced) continue
+    const marker = /^(#{1,6})\s/.exec(trimmed)
+    if (start === -1) {
+      if (heading.test(trimmed)) {
+        start = index
+        level = /^#+/.exec(trimmed)[0].length
+      }
+      continue
+    }
+    if (marker !== null && marker[1].length <= level) return { start, end: index }
+  }
+  return start === -1 ? null : { start, end: lines.length }
+}
+for (const { file, heading, label } of SECTION_ANCHORS) {
+  const lines = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8').split('\n')
+  const section = sectionBounds(lines, heading)
+  if (section === null) {
+    anchorFailures.push(`${file}: no heading matches "${label}" - ${SECTION_ANCHOR_REMEDY}`)
+    continue
+  }
+  for (let index = section.start + 1; index < section.end; index += 1) {
+    const line = lines[index]
+    if (reportedLines.has(`${file}:${index + 1}`)) continue
+    SECTION_VERSION_TOKEN.lastIndex = 0
+    let match
+    while ((match = SECTION_VERSION_TOKEN.exec(line)) !== null) {
+      sectionTokenCount += 1
+      readmeReferenceCount += 1
+      if (match[1] !== expectedVersion) {
+        staleReferences.push(
+          `${file}:${index + 1} pins ${match[0]} in the success-criteria section but package.json is ${expectedVersion}`,
+        )
+      }
+    }
+  }
+}
+
+if (staleReferences.length > 0 || anchorFailures.length > 0) {
+  console.error('')
+  if (staleReferences.length > 0) {
+    console.error(`README release references are stale (package.json is ${expectedVersion}):`)
+    for (const reference of staleReferences) console.error(`  ${reference}`)
+  }
+  if (anchorFailures.length > 0) {
+    console.error('README guard anchors/phrases no longer resolve:')
+    for (const failure of anchorFailures) console.error(`  ${failure}`)
+  }
+  console.error(`dsh-scout release gate: FAIL - bump the install/artifact references before releasing`)
+  console.error('(the same rule is asserted on every `npm test` in tests/package.test.mjs)')
+  process.exit(1)
+}
+console.log(`  readme release references: ${readmeReferenceCount} checked (${sectionTokenCount} inside the success-criteria section), all pinned to ${expectedVersion}`)
 
 run('npm', ['test'])
 

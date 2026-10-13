@@ -46,6 +46,24 @@ import {
 export const name = 'dsh-scout'
 export const inject = ['tools']
 
+/**
+ * The version this source tree ships, stated as a literal.
+ *
+ * It is deliberately never read back from `package.json`. A release checklist
+ * anchor only works when the version is asserted in two independent places: the
+ * assertion compares this literal against the manifest, so a bump that updates
+ * one and forgets the other fails the suite instead of shipping silently.
+ * `tests/acceptance.test.mjs` pins this constant, `package.json` and the
+ * `/scout status` output to the same string.
+ *
+ * Where this reaches a user: `runScoutCommand` prints it in `/scout status`.
+ * It cannot be printed at load time — a plugin's log output is not visible in
+ * any DSH surface (cordis only buffers it in memory), and a plugin that failed
+ * to load never runs at all, so "is it loaded, and which version?" is answered
+ * by the settings plugin list instead.
+ */
+export const PLUGIN_VERSION = '0.9.3'
+
 export interface Config {
   /** Default directory for case exports; case files land under `<scoutDir>/<caseId>/`. */
   scoutDir?: string
@@ -1301,7 +1319,11 @@ export function apply(ctx: Context, config: Config = {}) {
         kind: 'success',
         text: `[${scoutCase.caseId}] ${scoutCase.decision} · identity ${scoutCase.subject.identityStatus}`
           + ` · sources ${scoutCase.sources.length} / claims ${scoutCase.claims.length}`
-          + ` (verified ${verified}, open ${scoutCase.claims.length - verified})`,
+          + ` (verified ${verified}, open ${scoutCase.claims.length - verified})`
+          // Trailing, so the case facts stay the leading, greppable part of the
+          // line. This is the one surface that can state the version: reaching
+          // this branch already proves the plugin loaded.
+          + ` · dsh-scout ${PLUGIN_VERSION}`,
       }
     }
     if (action === 'questions') {
