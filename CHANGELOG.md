@@ -6,6 +6,8 @@
 
 ## [0.9.2] - 2026-10-13
 
+**已发布**（2026-10-13）：npm `dsh-scout@0.9.2`（`dist-tags.latest` = `0.9.2`），tarball `https://registry.npmjs.org/dsh-scout/-/dsh-scout-0.9.2.tgz`（**23 个文件**），shasum `bedb4a656709d5d0e77d5f4b410e2173c0b8eb31`，integrity `sha512-UIJOP8KalLqiEBssFB3+sw+cP1+R78nNZzwA/Wg5gT1o/NLOBgWccURdgbqk4fNdJwGKYVyNvbRuy4RZYrusDw==`，带 **Sigstore provenance**（透明日志 `https://search.sigstore.dev/?logIndex=3244828180`），由 GitHub Actions 以 `npm publish --provenance --access public` 发布；git tag `v0.9.2`（annotated，指向 `64138a0`）与 GitHub Release `v0.9.2`（附件 `dsh-scout-0.9.2.tgz`，130,691 B）同批创建；发布 workflow run `38406696598` success（16m59s：四版本 release gate → `pnpm pack` → npm publish → GitHub Release）。发布前验收：`npm test` **118/118**、`test:profile` PASS（六步真实宿主链）、`pnpm pack --dry-run` 干净、`env -u DSH_BIN npm run check:release` **4/4 PASS**；独立验证 [verification-0.9.2.md](docs/verification-0.9.2.md)（仓库文档，不在 npm 包内）判定 **GO**，无新缺陷。
+
 0.9.2 是 0.9.1 的收口版本：把 0.9.1 验证报告点名的最大盲区（**U11**）补成真实宿主门禁，清掉三轮独立验证留下的文档税，并关闭 0.9.1 的两个已知边界（**D10**、**O10**）。
 
 ### Added
@@ -19,7 +21,7 @@
 
 ### Fixed
 
-- **render 整串上限改为由省略号长度推导**（原 O10）：0.9.1 的裁切预算是固定余量 `MAX_RENDER_BYTES - 8`，再追加 3 B 省略号，含省略号的实际上界约 1019 B（实测最坏 1018 B），距 1024 B 预算只剩约 5 B 余量——把余量改到 3 以内就会越界。现在省略号自身的 UTF-8 长度先从预算里扣掉、再按码元裁切，整串（含省略号）**不超过 1024 B**；对抗性测试把 ASCII 输入推到整整 1024 B，并对 CJK 与 emoji（代理对、UTF-8 变长）断言不超过预算。
+- **render 整串上限改为由省略号长度推导**（原 O10）：0.9.1 的裁切预算是固定余量 `MAX_RENDER_BYTES - 8`（1016 B）——裁到 ≤1015 B 再追加 3 B 省略号，含省略号的**精确上界是 1018 B**（实测最坏 1018 B），距 1024 B 预算余 **6 B**；余量只剩 1 B（调用点写 `MAX_RENDER_BYTES - 1`）时上界变成 1025 B，就会越界。现在省略号自身的 UTF-8 长度先从预算里扣掉、再按码元裁切，整串（含省略号）**不超过 1024 B**；对抗性测试把 ASCII 输入推到整整 1024 B，并对 CJK 与 emoji（代理对、UTF-8 变长）断言不超过预算。
 
 ### Docs
 
