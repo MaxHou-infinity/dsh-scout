@@ -955,3 +955,108 @@ RE1–RE11 不变。**我的阻塞判断：不阻塞发布。** 理由：① 该
 9. **本文档或本轮套件被改动后未重跑**：`tests/verification-0.9.3.test.mjs`（`14552bfeec5abb7b`）或本文档变更后，未重跑 §12.3 / §12.7 ⇒ NO-GO。
 
 **发布后请补的两件事**：① CHANGELOG `## [0.9.3]` 的「待发布」换成实际 npm 元数据（tarball / shasum / integrity / provenance / tag / run id）；② README 矩阵的 0.9.3 行由「候选 tarball」改为「已发布」——两处都必须用同一份独立抽取器再复核一次（活引用的版本号不变，但"已发布"措辞要出现，且 §12.3 D 项的"无提前声明"检查届时按发布后口径重新解释）。
+---
+
+# 缺陷记录 F-5：验证套件依赖 Node test reporter（CI 发布阻塞，已修）
+
+## 13.0 观察（CI，v0.9.3 release workflow）
+
+`Run the release gate` **20 秒失败**，`npm test` **133/134**，唯一失败是**我的** V4：
+
+```console
+not ok 129 - V4 · the shipped README guard fails on every stale exact reference, and passes on the frozen tree
+  error: 'the pristine guard run must report zero failures'
+  location: tests/verification-0.9.3.test.mjs:367
+```
+
+而同一份 CI 日志里，V4 抓到的**子进程**输出是 `1..18 / # tests 18 / # pass 18 / # fail 0` —— 子进程 **18/18 全过**。
+
+## 13.1 根因
+
+- `runShippedGuard` 用 `execFileSync('node', ['--test', 'tests/package.test.mjs'], { stdio: ['ignore','pipe','pipe'] })` 抓输出，V4 断言 `assert.match(clean.output, /ℹ fail 0/)`。
+- node 的**默认 test reporter 不是常量**：Node 22（CI，piped 子进程）→ `tap`，汇总写 `# fail 0`；本机 Node 26（以及 24）→ `spec`，汇总写 `ℹ fail 0`。
+- ⇒ 断言匹配的是 spec 的字符 `ℹ`；在 tap 环境下子进程全过、断言仍报 "must report zero failures"。**这是"本地绿、CI 红"**——正是本轮主题要消灭的那类缺陷，而它出自我自己的验证套件。Lead 的判定正确。
+
+## 13.2 本机复现（没有 Node 22，也能精确复现失败机制）
+
+- 本机确实没有 Node 22：`npx -y node@22.19.0 --version` → **v26.8.1**（与 Lead 观察一致）；本机只有 system Node **26.8.1** 与桌面 App 自带 Node **24.21.0**；`ci.yml` / `release.yml` / `compatibility-nightly.yml` 三个 workflow 都锁 `node-version: 22`。
+- 但差异的全部内容就是 reporter，可以用环境变量精确模拟：`NODE_OPTIONS='--test-reporter=tap'`（Node 允许它经 `NODE_OPTIONS` 生效，并会传给子进程）。
+- **用未修的套件**（轮三开头快照 `294c3ccdce5400f4`；其 V4 断言与发布提交版 `14552bfeec5abb7b` 逐字相同，只少了后加的 V9）复现：
+
+```console
+$ NODE_OPTIONS='--test-reporter=tap' node --test tests/verification-0.9.3.test.mjs
+not ok 4 - V4 · the shipped README guard fails on every stale exact reference, and passes on the frozen tree
+  error: 'the pristine guard run must report zero failures'
+    # pass 18
+    # fail 0
+# pass 7
+# fail 1
+```
+
+⇒ 与 CI 的失败**同一个断言、同一条消息、同样的"子进程全过"**。同一份套件在默认环境（spec）下 V4 通过 ⇒ 复现的正是 reporter/Node 版本差异。
+
+## 13.3 修复（4 处，全部在 `tests/verification-0.9.3.test.mjs`）
+
+1. **给子进程显式固定 reporter**：`['--test', '--test-reporter=tap', 'tests/package.test.mjs']`。TAP 汇总格式跨 Node 大版本稳定，不再依赖默认值。
+2. **断言改成 TAP 计数 + 退出码**：`tapFailures(output)` 解析 `^# fail (\d+)$`；解析不到（reporter 再漂移）时**显式失败并打印子进程输出**，绝不静默通过。没有把 `ℹ` 换成 `#` 了事。
+3. **子进程改用 `process.execPath`**：跑的就是父套件自己的那个 Node，不受 PATH 上恰好哪个 `node` 影响。
+4. **`childEnv()` 额外剥离 `NODE_OPTIONS` 里的 test-runner flags**（`--test` / `--test-reporter[=…]` / `--test-reporter-destination[=…]`）：否则外部传入的 reporter 会与显式指定的那个冲突（Node 报 `The argument '--test-reporter' must match ... Received [ 'tap', 'tap' ]`）——这是我复现过程中真撞到的坑，也顺带让套件对 NODE_OPTIONS 免疫。
+
+## 13.4 本轮实测（跨 Node 大版本 × 两种 reporter）
+
+| 环境 | 我的套件 | 全套件 |
+|---|---|---|
+| Node 26.8.1（本机），默认 spec | **9/9** | **134/134**（`npm test`） |
+| Node 26.8.1，**TAP-forced**（CI reporter 模拟） | **9/9** | **134/134**（`NODE_OPTIONS=… node --test tests/*.test.mjs`） |
+| Node 24.21.0（桌面 App 自带），默认 | **9/9** | **134/134** |
+| Node 24.21.0，**TAP-forced** | **9/9** | — |
+| Node 26 + TAP-forced，**未修套件** | **V4 RED**（复现 CI） | — |
+| Node 22.19.x | **本机不可得** | — |
+
+原始尾部：
+
+```console
+$ npm test                       # Node 26.8.1，默认 reporter
+ℹ tests 134
+ℹ pass 134
+ℹ fail 0
+ℹ duration_ms 2408.891292
+exit=0
+
+$ NODE_OPTIONS='--test-reporter=tap' node --test tests/*.test.mjs
+# tests 134
+# pass 134
+# fail 0
+```
+
+**非空洞性保持**：V4 在 TAP 模式下仍然把 17 组变异（含 6 组 fail-closed 形态、逐条 stale 精确引用、锚点改写）全部判红，pristine 判绿；V9 的夹具自证（过期夹具 ≥3 条、候选形态 0 条）在两种 reporter 下都跑。
+
+## 13.5 审计：套件里还有没有别的 Node 22 vs 26 差异
+
+结论：**未发现第二处**。逐项证据：
+
+| 检查项 | 结果 |
+|---|---|
+| 默认 reporter 依赖 | 修后子进程 reporter 被显式固定；断言里 `ℹ` 出现 **0** 次（唯一命中是解释本条缺陷的注释） |
+| `isTTY` 分支 | **0** 处；子进程 stdio 显式 `pipe`；结果判定不再依赖 TTY 形态 |
+| `process.version` 依赖 | **0** 处 |
+| Node 23+ API | `structuredClone` / `Object.groupBy` / `toSorted` / `toReversed` / `findLast` / `Array.fromAsync` / `Promise.withResolvers` 均 **0** 处 |
+| `import.meta.resolve` | **0** 处（我不使用；`tests/package.test.mjs` 使用，但那是既有套件、Node 22 上本就通过） |
+| 子进程输出解析 | 只有两处：① V4 的 TAP 计数（已固定）；② 变更用例里的 `README.md:<line>` 诊断——那是**仓库自带文案**，TAP 的 YAML `error:` 字段同样保留；V4 在 TAP 下 17 组变异全部被抓 ⇒ 已实测 |
+| V8 的子进程 | 跑 `node scripts/check-release.mjs`（**普通脚本，不涉及 test reporter**），npm/pnpm 用桩；退出码 + 仓库自有 stdout 文案 |
+| 使用的 `node:` 模块 | `node:test`、`assert/strict`、`child_process`、`fs`、`os`、`path`、`url` —— 全部 Node 22 可用（`fs.cpSync` ≥16.7、`Array.prototype.at` ≥16.6、`String.replaceAll` ≥15、lookbehind ≥8.3） |
+| 错误消息措辞 | 只匹配仓库自有字符串与 TAP 字段，不匹配 Node 自身报错文案 |
+
+## 13.6 诚实边界：凭什么认为修好了、哪些只能等 CI
+
+- **本机无法验证 Node 22**：没有 Node 22 二进制，`npx node@22` 落回 v26.8.1；三个 workflow 都锁 22。**真正的 Node 22 结论只能由 CI 给出。**
+- **我认为修好了，依据是**：① 失败机制被**精确复现**（TAP-forced 下未修套件报出与 CI 同一条断言消息）；② 修复把子进程 reporter **显式钉死为 TAP**，断言只读 TAP 计数与退出码 ⇒ 子进程输出形态不再随 Node 大版本变化；③ 修后在同一失败场景（Node 26 + TAP-forced）与 Node 24、Node 26 默认场景下，套件与全套件全绿（134/134）；④ 审计未发现其它版本敏感假设（§13.5）。
+- **只能等 CI 确认的**：Node 22 自身可能存在的、与 reporter 无关的差异。最快信号是 `npm test`（V4 在 ~1–2 s 内即出结果），不必等 `check:release` 的四版本矩阵（约 90 s）。
+
+## 13.7 订正与影响
+
+- 这是**验证套件**的缺陷（编号 **F-5**），**不是产品缺陷**：`README*`、版本守卫、`src/`、`package.json`、`CHANGELOG`、契约、checklist 等产品文件在本轮**一字未动**（哈希与 §12.1 完全一致）。
+- **§12 的签核 GO 仍然成立**（针对产品文件与文档内容）；被卡住的是"套件在 CI 上跑绿"这一步，现已修复，待一次 CI 运行确认。
+- F-1~F-4 关闭状态不变；残余类别 RE1–RE12 不变。
+- 哈希更新（只涉及验证者两个文件）：`tests/verification-0.9.3.test.mjs` `14552bfeec5abb7b` → **`35c036be8bb30b24`**；产品文件哈希全部不变：`README.md` `449698ba62805998`、`README.en.md` `e51283083b1a6596`、`tests/package.test.mjs` `c256de118efc8253`、实现集聚合 **`6480ff437eab50c5`**。
+- **NO-GO 条件追加一条**：套件再次引入依赖 Node 大版本 / reporter / TTY 的断言（或 `npm test` 在 Node 22 与 Node 26 任一上不绿）⇒ 未重跑两版本前不得发布。

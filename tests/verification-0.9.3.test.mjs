@@ -305,13 +305,52 @@ function stageGuardCopy(root) {
 function childEnv(extra = {}) {
   const env = { ...process.env, ...extra }
   delete env.NODE_TEST_CONTEXT
+  // A test-runner flag arriving through NODE_OPTIONS would collide with the
+  // explicit --test-reporter below (Node rejects two reporters for one
+  // destination). Drop runner flags, keep every other NODE_OPTIONS flag.
+  if (typeof env.NODE_OPTIONS === 'string') {
+    const kept = []
+    const tokens = env.NODE_OPTIONS.split(/\s+/).filter(Boolean)
+    for (let index = 0; index < tokens.length; index += 1) {
+      const token = tokens[index]
+      if (token.startsWith('--test-reporter=') || token.startsWith('--test-reporter-destination=')) continue
+      if (token === '--test-reporter' || token === '--test-reporter-destination') {
+        index += 1
+        continue
+      }
+      if (token === '--test') continue
+      kept.push(token)
+    }
+    if (kept.length === 0) delete env.NODE_OPTIONS
+    else env.NODE_OPTIONS = kept.join(' ')
+  }
   return env
+}
+
+/**
+ * TAP is the one summary format that does not move with the Node major.
+ *
+ * The default test reporter is version- and TTY-dependent: Node 22 in CI prints
+ * `tap` for a piped child, while this machine's Node 26 prints `spec` (`ℹ fail 0`).
+ * An earlier revision of this suite asserted the spec shape, so it was green here
+ * and red on the Node 22 release workflow even though the child had passed
+ * (`# tests 18 / # pass 18 / # fail 0`). The child is now pinned to TAP and the
+ * assertion reads TAP's `# fail <n>`, which is stable across the supported range.
+ * The child also runs on `process.execPath`, so it exercises the runtime the suite
+ * itself runs under instead of whatever `node` happens to be first on PATH.
+ */
+const TEST_REPORTER = '--test-reporter=tap'
+
+/** TAP failure count, or null when the run printed no TAP summary at all. */
+function tapFailures(output) {
+  const match = /^# fail (\d+)$/m.exec(output)
+  return match === null ? null : Number(match[1])
 }
 
 /** Run the shipped guard in one staged copy; returns exit code plus output. */
 function runShippedGuard(root) {
   try {
-    const stdout = execFileSync('node', ['--test', 'tests/package.test.mjs'], {
+    const stdout = execFileSync(process.execPath, ['--test', TEST_REPORTER, 'tests/package.test.mjs'], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -370,7 +409,17 @@ test('V4 · the shipped README guard fails on every stale exact reference, and p
     const pristine = stageGuardCopy(join(workspace, 'pristine'))
     const clean = runShippedGuard(pristine)
     assert.equal(clean.code, 0, `the frozen tree must pass its own guard:\n${clean.output}`)
-    assert.match(clean.output, /ℹ fail 0/, 'the pristine guard run must report zero failures')
+    const cleanFailures = tapFailures(clean.output)
+    assert.notEqual(
+      cleanFailures,
+      null,
+      `the pristine guard run printed no TAP summary (reporter drift?):\n${clean.output}`,
+    )
+    assert.equal(
+      cleanFailures,
+      0,
+      `the pristine guard run must report zero failures:\n${clean.output}`,
+    )
 
     const failures = []
     for (const mutation of GUARD_MUTATIONS) {
