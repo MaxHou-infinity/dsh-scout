@@ -577,20 +577,87 @@ test('V6 · the frozen 0.9.2 statements survive the 0.9.3 README rewrite', () =>
  * V7 · the desktop-path facts the checklist states about this repository
  * ------------------------------------------------------------------ */
 
-test('V9 · the verified-version-matrix live claims track the release', () => {
-  // The matrix section records the run for the release being cut: its release
-  // sentence, its table's version column, and its closing "updated to this
-  // version" claim are LIVE references that the shipped guard deliberately does
-  // not cover (KNOWN GAP in tests/package.test.mjs). Before a release this
-  // verifier re-derives them independently: a forgotten bump there ships a stale
-  // matrix while every gate stays green.
+test('V9 · the verified-version-matrix and CHANGELOG agree on the release state', () => {
+  // Time point: this suite verifies RELEASE_VERSION after publication. The
+  // shipped guard deliberately does not cover the matrix's live claims (KNOWN GAP
+  // in tests/package.test.mjs), so this check re-derives them here.
+  //
+  // It is a STATE check, not a "must be published" check, because the release
+  // workflow runs `check:release` on the tagged commit *before* `npm publish`:
+  // that commit's docs necessarily say 待发布 / 候选 tarball, and a hard
+  // "published" assertion would fail the gate of every future release. Each state
+  // gets its own complete contract, mixed states fail, and the stale directions
+  // (matrix back to candidate, metadata removed) are covered by the fixtures.
   const SEMVER = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`
+  const esc = (value) => value.replace(/\./g, '\\.')
   const HEADINGS = [/^#{2,4}\s*已实测版本矩阵$/, /^#{2,4}\s*Verified version matrix$/]
   const RELEASE_SENTENCE = [/实测通过/, /passed on four/]
   const CLOSING = /故更新为本版本|so the table is updated to this version/
+  /** Does `text` present exactly `version` as published (within one clause)? */
+  const claimsPublishedBy = (text, version) => {
+    // The claim must be the phrase's own clause: walk back from every
+    // publication phrase to the nearest mention of this version and reject a
+    // sentence boundary in between (that is the 0.9.2 history line's shape).
+    for (const match of text.matchAll(/已发布|is published|published on npm/g)) {
+      const before = text.slice(0, match.index)
+      const at = before.lastIndexOf(version)
+      if (at === -1) continue
+      const between = before.slice(at + version.length)
+      if (between.length <= 40 && !/[。！？；;.!?]/.test(between)) return true
+    }
+    return false
+  }
 
-  /** Every live-claim problem in one matrix section; empty when it tracks `version`. */
-  function matrixProblems(file, text, version) {
+  /** Publication metadata a *published* entry must carry, built from the version. */
+  const metadata = (version) => [
+    ['tarball name', new RegExp(`dsh-scout-${esc(version)}\\.tgz`)],
+    ['shasum', /\bshasum\b[^\n]{0,90}?\b[0-9a-f]{40}\b/],
+    ['integrity', /\bintegrity\b[^\n]{0,90}?sha512-[A-Za-z0-9+/=]{20,}/],
+    ['workflow run id', /\brun\s*`?\d{6,}`?/],
+    ['dist-tag', new RegExp(`dist-tags\\.latest\`?\\s*=\\s*\`?${esc(version)}`)],
+    ['release tag', new RegExp(`tag\\s*\`?\\s*v${esc(version)}`)],
+  ]
+  /** Values that only exist after publication (used to reject a fabricated candidate). */
+  const publishedValues = (version) => [
+    ['shasum', /\bshasum\b[^\n]{0,90}?\b[0-9a-f]{40}\b/],
+    ['integrity', /\bintegrity\b[^\n]{0,90}?sha512-[A-Za-z0-9+/=]{20,}/],
+    ['dist-tag', new RegExp(`dist-tags\\.latest\`?\\s*=\\s*\`?${esc(version)}`)],
+  ]
+
+  /** One `## [version]` section of the CHANGELOG. */
+  function changelogSection(text, version) {
+    const marker = `## [${version}]`
+    const start = text.indexOf(marker)
+    if (start === -1) return null
+    const next = text.indexOf('\n## [', start + 1)
+    return text.slice(start, next === -1 ? undefined : next)
+  }
+
+  /** Problems in the CHANGELOG entry for `version`, given the release `state`. */
+  function changelogProblems(text, version, state) {
+    const body = changelogSection(text, version)
+    if (body === null) return [`CHANGELOG.md: no "## [${version}]" entry`]
+    const problems = []
+    const pending = /待发布/.test(body)
+    const published = /已发布|is published/.test(body)
+    if (state === 'published') {
+      if (pending) problems.push(`the published entry still says 待发布`)
+      if (!published) problems.push(`the published entry does not record the release`)
+      for (const [label, pattern] of metadata(version)) {
+        if (!pattern.test(body)) problems.push(`the published entry is missing its ${label}`)
+      }
+    } else {
+      if (!pending) problems.push(`the unpublished entry must say 待发布`)
+      if (published) problems.push(`the unpublished entry claims to be published`)
+      for (const [label, pattern] of publishedValues(version)) {
+        if (pattern.test(body)) problems.push(`the unpublished entry carries ${label} metadata`)
+      }
+    }
+    return problems
+  }
+
+  /** Problems in one README matrix section, given the release `state`. */
+  function matrixProblems(file, text, version, state) {
     const problems = []
     const lines = text.split('\n')
     let start = -1
@@ -610,26 +677,48 @@ test('V9 · the verified-version-matrix live claims track the release', () => {
     for (const claimed of sentenceVersions) {
       if (claimed !== version) problems.push(`${file}: the release sentence claims dsh-scout@${claimed}`)
     }
-    if (/(已发布|\breleased\b|\bpublished\b)/.test(sentence ?? '')) {
-      problems.push(`${file}: the release sentence presents the current release as already published`)
+    if (/(已发布|is published|published on npm)/.test(sentence ?? '')) {
+      problems.push(`${file}: the release sentence presents the verification run as post-publication`)
     }
 
     const headerIndex = body.findIndex((line) => /^\|\s*(DSH 版本|DSH version)/.test(line.trim()))
-    const header = headerIndex === -1 ? '' : body[headerIndex]
-    const headerVersion = header.match(new RegExp(`(${SEMVER})`))?.[1]
-    if (headerVersion === undefined) problems.push(`${file}: the matrix table header names no version`)
-    else if (headerVersion !== version) problems.push(`${file}: the matrix table column is ${headerVersion}`)
-    if (/(已发布|\breleased\b)/.test(header)) {
-      problems.push(`${file}: the matrix table headline presents the current release as already published`)
+    if (headerIndex === -1) {
+      problems.push(`${file}: the matrix table header must resolve`)
+    } else {
+      const cells = body[headerIndex].split('|').map((cell) => cell.trim())
+      const releaseCell = cells.find((cell) => new RegExp(SEMVER).test(cell))
+      if (releaseCell === undefined) {
+        problems.push(`${file}: the matrix header names no version column`)
+      } else {
+        const cellVersion = new RegExp(`(${SEMVER})`).exec(releaseCell)[1]
+        if (cellVersion !== version) problems.push(`${file}: the matrix version column is ${cellVersion}`)
+        if (state === 'published' && !/(已发布|released)/.test(releaseCell)) {
+          problems.push(`${file}: the published ${version} column must say 已发布/released, got "${releaseCell}"`)
+        }
+        if (state === 'candidate' && /(已发布|released)/.test(releaseCell)) {
+          problems.push(`${file}: the unpublished ${version} column must not claim publication, got "${releaseCell}"`)
+        }
+        if (state === 'candidate' && !/(候选|candidate)/.test(releaseCell)) {
+          problems.push(`${file}: the candidate ${version} column must be marked as not yet published, got "${releaseCell}"`)
+        }
+      }
     }
 
     const closingIndex = body.findIndex((line) => CLOSING.test(line))
     if (closingIndex === -1) {
       problems.push(`${file}: the "updated to this version" closing claim is missing`)
     } else {
-      const before = body[closingIndex].split(CLOSING)[0]
+      const closing = body[closingIndex]
+      const before = closing.split(CLOSING)[0]
       const subject = [...before.matchAll(new RegExp(`(${SEMVER})`, 'g'))].at(-1)?.[1]
       if (subject !== version) problems.push(`${file}: the closing update claim is about ${subject}`)
+      const closingClaims = claimsPublishedBy(closing, version)
+      if (state === 'published' && !closingClaims) {
+        problems.push(`${file}: the closing paragraph must present ${version} as published`)
+      }
+      if (state === 'candidate' && closingClaims) {
+        problems.push(`${file}: the closing paragraph presents unpublished ${version} as published`)
+      }
     }
 
     // The previous release's immutable publication facts must survive in the section.
@@ -638,51 +727,111 @@ test('V9 · the verified-version-matrix live claims track the release', () => {
         problems.push(`${file}: the 0.9.2 publication fact "${phrase}" is missing from the matrix`)
       }
     }
+
+    // The document as a whole must agree with the state.
+    const documentClaims = claimsPublishedBy(text, version)
+    if (state === 'published' && !documentClaims) {
+      problems.push(`${file}: the published release ${version} is not claimed as published anywhere`)
+    }
+    if (state === 'candidate' && documentClaims) {
+      problems.push(`${file}: the unpublished release ${version} is claimed as published`)
+    }
     return problems
   }
 
-  // Fixture self-test: the check must catch the class the shipped guard misses,
-  // and must accept the shape the release actually uses.
-  const fixture = (release, header) => [
+  // ---- fixtures: both states must pass, and every stale direction must fail ----
+  const matrixFixture = ({ sentence = '0.9.3', header, closing = '0.9.3', closingPublished, history = true }) => [
     '#### 已实测版本矩阵',
     '',
-    `**\`dsh-scout@${release}\` 候选 tarball 已在四个精确 DSH 版本上实测通过**（发布前）：覆盖安装与卸载。`,
+    `**\`dsh-scout@${sentence}\` 已在四个精确 DSH 版本上实测通过**（发布前）：覆盖安装与卸载。`,
     '',
     `| DSH 版本 | npm 渠道（2026-10-12 核对） | ${header} |`,
     '| --- | --- | --- |',
     '| `0.1.0-rc.6` | 兼容范围下界 | 通过 |',
     '',
-    '本表此前记录过 **0.9.0** 与 **0.9.1** 候选 tarball 的结果；0.9.3 沿用同一范围，并用同一道门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。上一版 **0.9.2 已发布到 npm**（`dist-tags.latest` = `0.9.2`），发布 workflow（run `38406696598`）先跑了同一道门禁。',
+    `本表此前记录过 0.9.0 与 0.9.1 候选 tarball 的结果；${closing} 沿用同一范围，并用同一道门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。`
+      + (closingPublished ? `**${closing} 已发布到 npm**（\`dist-tags.latest\` = \`${closing}\`）。` : '')
+      + (history ? '上一版 **0.9.2 已发布到 npm**（`dist-tags.latest` = `0.9.2`），发布 workflow（run `38406696598`）。' : ''),
   ].join('\n')
-  assert.ok(
-    matrixProblems('README.fixture.md', fixture('0.9.2', '0.9.2（已发布）结果'), '0.9.3').length >= 3,
-    'a stale matrix must be reported (release sentence, table column, closing claim)',
-  )
-  assert.deepEqual(
-    matrixProblems('README.fixture.md', fixture('0.9.3', '0.9.3（候选 tarball）结果'), '0.9.3'),
-    [],
-    'the candidate shape the release uses must pass',
-  )
 
-  const manifest = readJson('package.json')
-  const problems = ['README.md', 'README.en.md'].flatMap((file) =>
-    matrixProblems(file, readText(file), manifest.version),
-  )
-  assert.deepEqual(problems, [], `the matrix live claims must track ${manifest.version}:\n${problems.join('\n')}`)
+  const publishedFixture = matrixFixture({ header: '0.9.3（已发布）结果', closingPublished: true })
+  const candidateFixture = matrixFixture({ sentence: '0.9.4', header: '0.9.4（候选 tarball）结果', closing: '0.9.4', closingPublished: false })
+  assert.deepEqual(matrixProblems('README.fixture.md', publishedFixture, '0.9.3', 'published'), [], 'published shape must pass')
+  assert.deepEqual(matrixProblems('README.fixture.md', candidateFixture, '0.9.4', 'candidate'), [], 'candidate shape must pass')
 
-  // And no shipped doc may present this release as published before it is: the
-  // CHANGELOG entry still says so explicitly.
-  assert.match(readText('CHANGELOG.md'), /## \[0\.9\.3\][\s\S]{0,200}?待发布/, 'the 0.9.3 entry must stay pre-publication')
-  for (const file of ['README.md', 'README.en.md']) {
-    const text = readText(file)
-    for (const match of text.matchAll(/0\.9\.3/g)) {
-      const around = text.slice(Math.max(0, match.index - 60), match.index + 60)
-      assert.ok(
-        !/(已发布|\bpublished\b|dist-tags\.latest\s*=\s*`?0\.9\.3|tag\s*v0\.9\.3)/.test(around),
-        `${file}: a premature 0.9.3 publication claim near "…${around.replaceAll('\n', ' ')}…"`,
-      )
-    }
+  const staleMatrix = [
+    ['header back to candidate', matrixFixture({ header: '0.9.3（候选 tarball）结果', closingPublished: true }), '0.9.3', 'published', 1],
+    ['header names another release', matrixFixture({ header: '0.9.2（已发布）结果', closingPublished: true }), '0.9.3', 'published', 1],
+    ['closing does not record publication', matrixFixture({ header: '0.9.3（已发布）结果', closingPublished: false }), '0.9.3', 'published', 1],
+    ['0.9.2 facts removed', matrixFixture({ header: '0.9.3（已发布）结果', closingPublished: true, history: false }), '0.9.3', 'published', 1],
+    ['release sentence names another version', matrixFixture({ sentence: '0.9.2', header: '0.9.3（已发布）结果', closingPublished: true }), '0.9.3', 'published', 1],
+    [
+      'release sentence claims publication',
+      matrixFixture({ header: '0.9.3（已发布）结果', closingPublished: true }).replace('实测通过**', '已发布并通过**'),
+      '0.9.3',
+      'published',
+      1,
+    ],
+    ['candidate header claims publication', matrixFixture({ sentence: '0.9.4', header: '0.9.4（已发布）结果', closing: '0.9.4', closingPublished: false }), '0.9.4', 'candidate', 1],
+    ['candidate closing claims publication', matrixFixture({ sentence: '0.9.4', header: '0.9.4（候选 tarball）结果', closing: '0.9.4', closingPublished: true }), '0.9.4', 'candidate', 1],
+  ]
+  for (const [label, fixture, version, state, minimum] of staleMatrix) {
+    const problems = matrixProblems('README.fixture.md', fixture, version, state)
+    assert.ok(problems.length >= minimum, `stale matrix fixture "${label}" must be reported, got ${problems.length}`)
   }
+
+  const changelogFixture = (version, { pending = false, parts = {} } = {}) => {
+    // A pending entry carries no publication metadata unless a fixture asks for
+    // one on purpose (the "fabricated metadata" direction).
+    const include = (key) => (parts[key] === true ? true : pending ? false : parts[key] !== false)
+    return [
+      `## [${version}] - 2026-10-13`,
+      '',
+      pending
+        ? `**待发布**：本条目描述冻结为 ${version} 的工作树；npm 元数据在发布后补记。`
+        : `**已发布**（2026-10-13）：npm \`dsh-scout@${version}\`（\`dist-tags.latest\` = \`${version}\`）`,
+      include('shasum') ? `shasum \`${'a'.repeat(40)}\`` : '',
+      include('integrity') ? `integrity \`sha512-${'A'.repeat(32)}==\`` : '',
+      include('run') ? '发布 workflow run `38428072425` success' : '',
+      include('tarball') ? `tarball \`https://registry.npmjs.org/dsh-scout/-/dsh-scout-${version}.tgz\`` : '',
+      include('tag') ? `git tag \`v${version}\`（annotated）` : '',
+      '',
+      '### Added',
+      '',
+      '- nothing.',
+    ].join('\n')
+  }
+
+  assert.deepEqual(changelogProblems(changelogFixture('0.9.3'), '0.9.3', 'published'), [], 'published CHANGELOG shape must pass')
+  assert.deepEqual(changelogProblems(changelogFixture('0.9.4', { pending: true }), '0.9.4', 'candidate'), [], 'candidate CHANGELOG shape must pass')
+  const staleChangelog = [
+    ['entry still says 待发布', changelogFixture('0.9.3', { pending: true }), '0.9.3', 'published', 1],
+    ['tarball name removed', changelogFixture('0.9.3', { parts: { tarball: false } }), '0.9.3', 'published', 1],
+    ['shasum removed', changelogFixture('0.9.3', { parts: { shasum: false } }), '0.9.3', 'published', 1],
+    ['integrity removed', changelogFixture('0.9.3', { parts: { integrity: false } }), '0.9.3', 'published', 1],
+    ['run id removed', changelogFixture('0.9.3', { parts: { run: false } }), '0.9.3', 'published', 1],
+    ['release tag removed', changelogFixture('0.9.3', { parts: { tag: false } }), '0.9.3', 'published', 1],
+    ['candidate entry carries release metadata', changelogFixture('0.9.4', { pending: true, parts: { shasum: true } }), '0.9.4', 'candidate', 1],
+  ]
+  for (const [label, fixture, version, state, minimum] of staleChangelog) {
+    const problems = changelogProblems(fixture, version, state)
+    assert.ok(problems.length >= minimum, `stale CHANGELOG fixture "${label}" must be reported, got ${problems.length}`)
+  }
+
+  // ---- the frozen tree ----
+  const changelog = readText('CHANGELOG.md')
+  const entry = changelogSection(changelog, RELEASE_VERSION)
+  assert.notEqual(entry, null, `CHANGELOG.md must carry a "## [${RELEASE_VERSION}]" entry`)
+  const pending = /待发布/.test(entry)
+  const released = /已发布|is published/.test(entry)
+  assert.notEqual(pending, released, `the ${RELEASE_VERSION} entry must state exactly one release state`)
+  const state = released ? 'published' : 'candidate'
+
+  const problems = [
+    ...changelogProblems(changelog, RELEASE_VERSION, state).map((problem) => `CHANGELOG.md: ${problem}`),
+    ...['README.md', 'README.en.md'].flatMap((file) => matrixProblems(file, readText(file), RELEASE_VERSION, state)),
+  ]
+  assert.deepEqual(problems, [], `the release docs must agree on the ${state} state:\n${problems.join('\n')}`)
 })
 
 test('V7 · the install checklist cites this repository accurately', () => {

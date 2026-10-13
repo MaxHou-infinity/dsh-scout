@@ -1060,3 +1060,107 @@ $ NODE_OPTIONS='--test-reporter=tap' node --test tests/*.test.mjs
 - F-1~F-4 关闭状态不变；残余类别 RE1–RE12 不变。
 - 哈希更新（只涉及验证者两个文件）：`tests/verification-0.9.3.test.mjs` `14552bfeec5abb7b` → **`35c036be8bb30b24`**；产品文件哈希全部不变：`README.md` `449698ba62805998`、`README.en.md` `e51283083b1a6596`、`tests/package.test.mjs` `c256de118efc8253`、实现集聚合 **`6480ff437eab50c5`**。
 - **NO-GO 条件追加一条**：套件再次引入依赖 Node 大版本 / reporter / TTY 的断言（或 `npm test` 在 Node 22 与 Node 26 任一上不绿）⇒ 未重跑两版本前不得发布。
+---
+
+# 口径切换：V9 从"发布前签核"到"发布后事实同步"（T-R）
+
+## 14.0 触发与事实
+
+- **0.9.3 已成功发布**：npm `dsh-scout@0.9.3`（`dist-tags.latest` = `0.9.3`）、tag `v0.9.3` → `3634c2c`、GitHub Release 附 tarball（158,725 B）、Sigstore provenance logIndex `3245268322`、发布 workflow run `38428072425`（约 20 分 28 秒）。
+- install-docs 完成发布后同步后，`npm test` = **133/134**，唯一红项是**我的 V9**。
+- **这不是文档写错，是 V9 的时间点过期了。** 本报告 §12 自己就写明了这一步：§12.9 的收尾要求「发布后请补的两件事……且 §12.3 D 项的『无提前声明』检查届时按发布后口径重新解释」；§12 也把 V9 描述为"对**待发布提交**做最后签核"。所以正确动作是改 V9，而不是回滚文档。
+
+## 14.1 关键设计判断：为什么不能做"硬反转"
+
+把 V9 直接写成"当前版本**必须**已发布"会修好今天、锁死明天：
+
+```yaml
+# .github/workflows/release.yml（节选，行号即文件行号）
+33:      - name: Run the release gate
+34:        run: npm run check:release
+36:      - name: Pack the tarball
+37:        run: pnpm pack
+46:      - name: Publish to npm
+49:          npm publish --provenance --access public
+53:      - name: Create GitHub Release with tarball
+```
+
+发布门禁跑在**打 tag 的那个提交**上，而那个提交的文档**必然是**「待发布 / 候选 tarball」——0.9.3 的 run `38428072425` 正是这样通过的（当时 CHANGELOG 写「待发布」、README 表头写「候选 tarball」，`npm test` 134/134）。若 V9 硬要求"已发布"，**0.9.4 以及之后每一次发布都会在 gate 阶段被自己的套件挡住**，比这次的问题更重（这次挡的只是一笔发布后的文档同步提交）。
+
+因此 V9 改成**释放状态一致性检查**：
+
+1. 以 `CHANGELOG.md` 的 `## [RELEASE_VERSION]` 段判定状态：**已发布**（有 `已发布`/`is published`）或**待发布**（有 `待发布`），两者**必须恰有其一**——混合或都没有 ⇒ 直接失败。
+2. 每个状态施加**完整**契约（见 §14.2）：已发布态强制全部五条反向要求；候选态强制对称的"还未发布"契约（不得声称已发布、必须标候选、不得携带只有发布后才存在的元数据）。
+3. 当前树处于**已发布态** ⇒ **五条反向要求全部生效**；而 0.9.4 的候选态提交仍然能通过 gate。
+
+## 14.2 五条反向要求逐条落地
+
+| # | 原断言（发布前口径） | 现断言（按状态） |
+|---|---|---|
+| 1 | 表头**不得**含 `已发布`/`released` | **命名当前版本的那一列必须含** `已发布`/`released`（锚定"含 `<version>` 的单元格"，不碰同表里的历史列）；候选态则**必须**标 `候选`/`candidate` 且不得声称已发布，且该列版本必须等于 `RELEASE_VERSION` |
+| 2 | CHANGELOG `## [0.9.3]` **必须**仍有「待发布」 | **不得**再有「待发布」，且**必须**含：tarball 名（`dsh-scout-<v>.tgz`）、`shasum` + 40 位十六进制、`integrity` + `sha512-…`、workflow run id、`dist-tags.latest` = `<v>`、`git tag v<v>` —— 全部用 `RELEASE_VERSION` 拼，无硬编码 |
+| 3 | `0.9.3` ±60 字符内**不得**出现发布声明 | **必须**出现：从每个发布短语回溯到最近的 `<version>` 提及，且两者之间不得有句末标点（同句判定，避免把 `上一版 0.9.2 已发布到 npm` 的历史句误认成当前版本的声明）；候选态则相反。**「0.9.2 不可变事实必须仍在」保留**（`0.9.2` 与 run `38406696598` 必须出现在该小节） |
+| 4 | 夹具写死「`0.9.3（候选 tarball）结果` 必须 0 条问题」 | 夹具双向：**已发布形态** 0 条、**候选形态** 0 条；**8 组过期矩阵夹具**（表头退回候选 / 表头版本 ≠ 当前 / 收口句不记发布 / 0.9.2 事实被删 / 发布句版本错 / 发布句声称已发布 / 候选态表头声称已发布 / 候选态收口句声称已发布）与 **7 组过期 CHANGELOG 夹具**（仍写待发布 / 缺 tarball / 缺 shasum / 缺 integrity / 缺 run id / 缺 tag / 候选条目携带发布元数据）**必须各报 ≥1 条** |
+| 5 | — | 本节记录这次口径切换（谁：verifier-093；何时：0.9.3 发布后、install-docs 完成事实同步后；证据：§14.0 的发布事实 + release.yml 的步骤顺序 + §14.3 的双向变异） |
+
+## 14.3 双向证据（原始断言消息）
+
+**A. 文件级变异**（`/tmp` 副本，仓库零改动；跑真套件，`--test-reporter=tap`）：
+
+| 变异 | 期望 | 实测 | V9 的原始诊断 |
+|---|---|---|---|
+| M1 表头退回候选形态（`0.9.3（已发布）结果` → `0.9.3（候选 tarball）结果`） | RED | **exit=1，V9 RED** | `README.md: the published 0.9.3 column must say 已发布/released, got "0.9.3（候选 tarball）结果"` |
+| M2 删掉 CHANGELOG 的 shasum | RED | **exit=1，V9 RED** | `CHANGELOG.md: the published entry is missing its shasum` |
+| M3 CHANGELOG 退回「待发布」而 README 仍是已发布（**混合状态**） | RED | **exit=1，V9 RED** | `README.md: the unpublished 0.9.3 column must not claim publication, got "0.9.3（已发布）结果"` / `…the candidate 0.9.3 column must be marked as not yet published…` / `…the closing paragraph presents unpublished 0.9.3 as published` |
+| M4 矩阵版本列写成别的版本（`0.9.2（已发布）结果`） | RED | **exit=1，V9 RED** | `README.md: the matrix version column is 0.9.2` |
+| **M5 一致的候选态**（中英表头→候选、去掉当前版本的发布句、CHANGELOG→待发布） | **GREEN** | **exit=0，V9 GREEN** | —（这正是发布门禁在打 tag 时必须接受的状态） |
+
+**B. 套件内夹具**（随 `npm test` 常跑）：已发布形态 0 条、候选形态 0 条；15 组过期夹具（8 矩阵 + 7 CHANGELOG）逐一断言"必须被报出"。夹具在两种 reporter 下都执行。
+
+## 14.4 本轮门禁与回归
+
+```console
+$ npm test                                  # Node 26.8.1，默认 spec
+ℹ tests 134 / pass 134 / fail 0 / duration_ms 2376.543291        exit=0
+
+$ NODE_OPTIONS='--test-reporter=tap' node --test tests/*.test.mjs   # CI reporter 模拟
+# tests 134 / # pass 134 / # fail 0
+
+$ "$NODE24" --test tests/*.test.mjs          # 桌面 App 自带 Node 24.21.0
+ℹ tests 134 / pass 134 / fail 0
+$ NODE_OPTIONS='--test-reporter=tap' "$NODE24" --test tests/*.test.mjs
+# tests 134 / # pass 134 / # fail 0
+```
+
+⇒ F-5 的 reporter 修复在新 V9 上同样成立（四种组合全绿），且 V9 的绿色不是靠削弱换来的（§14.3 A 的四个方向都会红）。
+
+## 14.5 诚实边界
+
+- **Node 22 依然只能靠 CI**：本机无 Node 22（`npx node@22` 落回 v26.8.1）；上面的 TAP-forced 只是复刻 CI 的 reporter 行为。CI 绿了才算 Node 22 确认。
+- **状态一致性有一个有意不覆盖的极端情形**：发布后把 CHANGELOG 与两份 README **整体**回滚成一致的候选态，V9 不会报错（两个状态各自自洽）。要封死它需要引入"曾经发布过"的外部事实（例如 `git tag`），而 CI 是浅克隆、且套件不应依赖 git 状态——**取舍已记录**，本轮不引入。真实风险低：发布事实还存在于 npm、GitHub Release 与 tag 三处。
+- **V9 不是"永不翻面"的**：它现在接受两种自洽状态，因此下一个版本（候选态）与本次发布后（已发布态）都无需再改；但 `RELEASE_VERSION` 常量本身仍按项目惯例随发布手改（V1 的硬编码就是为此）。
+
+## 14.6 哈希（发布后同步的当前树）
+
+| 文件 | 值 | 说明 |
+|---|---|---|
+| `README.md` | `a28ce1cef52a55d4` | install-docs 发布后同步（矩阵 → 已发布）；§12.1 的 `449698ba62805998` 是签核时（候选态）的记录 |
+| `README.en.md` | `a583ba569d45a9a6` | 同上（§12.1 为 `e51283083b1a6596`） |
+| `CHANGELOG.md` | `b8902b3491b2848e` | 同上（§12.1 为 `bb04d7986c049438`） |
+| `tests/package.test.mjs` | `c256de118efc8253` | 未变（T-N 的注释版本） |
+| `scripts/check-release.mjs` / `src/index.ts` / `package.json` | `e59fa213760b7619` / `3142abab04518acb` / `684424dc1fd54c45` | 均未变 |
+| `tests/verification-0.9.3.test.mjs`（验证者） | `a288a9ffdfcc20cd` | 本轮 V9 口径切换；上轮为 `35c036be8bb30b24` |
+
+发布物 `v0.9.3` 定格在 `3634c2c`（**发布后同步之前的树**：CHANGELOG 待发布、README 候选形态），当前树是其后的同步提交——这正是本报告 §12 要求的"发布事实另笔同步、不移动 tag"。
+
+## 14.7 结论与 NO-GO 条件更新
+
+**V9 口径切换完成：`npm test` 134/134；V9 在已发布态强制全部反向要求，在候选态保持发布门禁可用；四个方向的过期变异都会红。**
+
+NO-GO 条件修订（覆盖 §13.7）：
+
+1. 套件再次把**某一个时间点**写死（发布前口径挡发布后同步、或发布后口径挡下一次发布的 gate）⇒ 未修前不得发布。
+2. README 矩阵与 CHANGELOG 的释放状态**不一致**（V9 会当场变红），或已发布态缺 tarball/shasum/integrity/run id/tag/dist-tag 任一 ⇒ NO-GO。
+3. 0.9.2 的不可变发布事实（`0.9.2` 与 run `38406696598`）从矩阵小节消失 ⇒ NO-GO。
+4. 套件引入依赖 Node 大版本/reporter/TTY 的断言（`npm test` 必须在 Node 22 与 26 上都绿）⇒ NO-GO。
+5. §12.9 的其余条件（树偏离签发哈希未重跑、`check:release` 非 4/4、打包集变化、发布声明与事实不符、超范围表述）继续有效。

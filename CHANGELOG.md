@@ -6,7 +6,9 @@
 
 ## [0.9.3] - 2026-10-13
 
-**待发布**：本条目描述冻结为 0.9.3 的工作树；npm 元数据（tarball / shasum / integrity / provenance / git tag）在发布后补记。
+**已发布**（2026-10-13）：npm `dsh-scout@0.9.3`（`dist-tags.latest` = `0.9.3`），tarball `https://registry.npmjs.org/dsh-scout/-/dsh-scout-0.9.3.tgz`（**23 个文件**），shasum `45d3dc0d3b2e61840c8549bd8021798fae32b8c3`，integrity `sha512-x88Ar9Oi8RUK/PNtG/akox+MCJFBD2ajP95MwWGiodNtoDsz4Zsm4tx2BQU9KjChYq/YZnr1aWBl/uGYPWduqg==`，带 **Sigstore provenance**（透明日志 `https://search.sigstore.dev/?logIndex=3245268322`），由 GitHub Actions 以 `npm publish --provenance --access public` 发布；git tag `v0.9.3`（annotated，指向 `3634c2c`）与 GitHub Release `v0.9.3`（附件 `dsh-scout-0.9.3.tgz`，158,725 B）同批创建；发布 workflow run `38428072425` success（2026-10-13 16:08:46Z → 16:29:14Z，约 20 分 28 秒：四版本 release gate → `pnpm pack` → npm publish → GitHub Release）。发布前验收：`npm test` **134/134**、`test:profile` PASS（六步真实宿主链）、`pnpm pack` 23 个文件、`env -u DSH_BIN npm run check:release` **4/4 PASS**；独立验证 [verification-0.9.3.md](docs/verification-0.9.3.md)（仓库文档，不在 npm 包内）判定 **GO**。
+
+**发布时移动过一次 tag，如实记录**：首次 tag `v0.9.3` 指向 `6b8b9ab`，release workflow run `38426795876` 在 14 秒内（job 15:59:47Z → 16:00:01Z）挂在 `Run the release gate`——验证套件 V4 派生一个子进程跑出厂 README 守卫，却把断言压在 spec reporter 的汇总行上；Node 的默认 test reporter 跨大版本不稳定（CI 的 Node 22 对管道子进程打印 TAP 的 `# fail 0`，本地 Node 26 打印 spec 的 `fail 0`），子进程两种情况下都 18/18 通过，断言只在 CI 用的 Node 22 上失败。**当时 `Pack the tarball` / `Publish to npm` / `Create GitHub Release with tarball` 全部 skipped，没有任何东西发出去。** 修复提交 `3634c2c`（子进程固定到 TAP reporter、断言改读 TAP 失败数与退出码、用 `process.execPath`、剥离 `NODE_OPTIONS` 里的 test-runner 旗标）后删除 tag 并重建，第二次 run `38428072425` 成功。这是本轮"本地绿、CI 红"的实例：0.9.3 的全部工作就是把静默漂移变成可见失败，而这次先被拦下的是发布流程自己。
 
 0.9.3 的主题是**安装体验**，不加功能、不改运行时契约。缘起是一份在真实桌面 App 上完整走完安装的评审：README 的「三条已验证路径」对桌面 App 用户**全部不可用**——桌面版的 `desktop` profile 被 Electron 应用独占，CLI 对它的所有 `dsh plugin` 子命令都按 profile 名硬拒绝（`error: profile "desktop" is managed exclusively by the Electron application`，连兼容性逃生门 `allow-version` 一起拒绝），而桌面 App 恰恰是这类插件最主流的入口。本版把「App 内安装」补成主路径，并给安装补上可执行的判据。
 
