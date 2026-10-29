@@ -201,11 +201,13 @@ dsh plugin --profile <your-profile> remove dsh-scout              # 卸载
 
 ### DSH 兼容性
 
-DSH 对插件的兼容性有**三个层次**，不要混为一谈：
+以下表格记录 **DSH 0.2.0-rc.2 的历史行为**。截至 2026-10-29，[官方当前规则](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish)已优先检查 `engines.dsh`，缺失时才回退检查 DSH peer 范围。本插件两处范围相同。
+
+在上述旧运行时中，兼容性分为三个层次：
 
 | 层次 | 位置 | 谁在执行 | 不匹配会怎样 |
 |---|---|---|---|
-| **声明** | `package.json` 的 `engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`） | 目前**没有任何代码**读取（DSH 0.2.0-rc.2 运行时不读 `engines.dsh`；官方 manifest 的注释写明 *"DSH compatibility is declarative until a reader enforces it"*） | 只表达作者意图，不拦截任何东西 |
+| **声明** | `package.json` 的 `engines.dsh`（`>=0.1.0-rc.6 <0.3.0-0`） | 该版本**没有代码**读取（DSH 0.2.0-rc.2 运行时不读 `engines.dsh`；官方 manifest 的注释写明 *"DSH compatibility is declarative until a reader enforces it"*） | 只表达作者意图，不拦截任何东西 |
 | **生效** | `peerDependencies` 中名字为 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围（本仓库只有 `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"` 一条） | DSH 安装检查 + profile 启动预检 `evaluatePluginCompatibility()` | 安装阶段拒绝，或启动时禁用该插件行 |
 | **不被校验** | `@deepseek-ai/cordis: ">=4.0.2 <5"`（以及 `@deepseek-ai/schemastery`） | DSH 的 peer 名字过滤只认 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | 由 pnpm 解析，DSH 不做兼容判定 |
 
@@ -260,6 +262,8 @@ dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 | `0.2.1-alpha.2` | `alpha` | 通过 |
 
 本表此前记录过 **0.9.0** 与 **0.9.1** 候选 tarball 的结果；0.9.3 沿用同一 `peerDependencies` 与 `engines.dsh` 范围（**没有变化**）：本版改的是安装文档与诊断面——README 安装章节补上桌面 App 主路径、README 版本引用守卫、`/scout status` 输出带插件版本——依赖与运行时契约未动，并用同一道门禁在同样四个精确版本上复跑通过（4/4），故更新为本版本。**0.9.3 已发布到 npm**（`dist-tags.latest` = `0.9.3`）：发布 workflow（run `38428072425`）在 `pnpm pack` 之前跑了同一道四版本门禁，所以上表验证的就是最终发布的这份 0.9.3。npm 渠道那一列仍是 2026-10-12 的核对结果，本次复跑未重新核对。上一版 **0.9.2 已发布到 npm**（`dist-tags.latest` = `0.9.2`）：发布 workflow（run `38406696598`）在 `pnpm pack` 之前跑了同一道四版本门禁，所以当时这张表记录的 0.9.2 四版本通过，就是最终发布的那份。0.9.1 新增的 `/scout` 命令与 Skill 走可选绑定，宿主没有对应服务时静默跳过，不影响加载。
+
+2026-10-29 验证脚本修复：夜间检查改用 Node 24，以满足 DSH `0.2.2-alpha.2` 的 Node ≥24.9 要求；验证器通过公开的 `setExecutor` 能力区分单次与批量执行接口，并校验结果数量及调用 ID。失败不重试。该修复尚未发布到 npm，验证结果与边界见 [本次记录](docs/verification-dsh-2026-10-29.md)。
 
 未来的 `0.2.x` 版本虽落在声明范围内，仍需实际验证。[夜间兼容检查](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml)每天解析 npm 的 `latest`、`next`、`alpha` 到精确版本，再运行测试和隔离 profile 检查。徽章显示该工作流最近一次运行结果；以上表格记录已完成的精确版本验证。
 

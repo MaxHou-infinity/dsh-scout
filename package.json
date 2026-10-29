@@ -24,6 +24,7 @@
     "assets",
     "scripts/check-release.mjs",
     "scripts/profile-smoke.mjs",
+    "scripts/smoke-tool-call.mjs",
     "README.md",
     "LICENSE",
     "docs/dsh-scout-product-contract.md",

@@ -12,7 +12,7 @@
  *      (launcher service) and the `fs` seam are available, and the plugin
  *      disposer runs on unload (`DSH_SCOUT_UNLOAD`);
  *   3. REAL TOOL CALLS through the public runtime API
- *      `ctx.tools.execute({ callId, name, arguments, signal })`, in a SIX-STEP
+ *      `ctx.tools.execute()` (legacy single call or executor batch), in a SIX-STEP
  *      scenario chain run across up to six real host processes:
  *        STEP 1  create: `scout_start` + `scout_add_source` (E3 registry origin)
  *                + `scout_add_claim` → each `isError === false`; `scout_start`
@@ -57,7 +57,7 @@
  *      exported `case.json` equals the decision reported before the restart and
  *      after rehydration and after the cross-language import.
  *
- * RUNTIME NOTE — failures arrive as RESULTS, not thrown errors (measured on
+ * RUNTIME NOTE — tool failures arrive as RESULTS on the legacy API (measured on
  * dsh 0.2.0-rc.2): a tool body that violates its declared `output.schema` does
  * not reject `execute()`. The registry converts it to
  * `{ isError: true, error: { message, info: { name: 'ToolOutputError',
@@ -65,7 +65,8 @@
  * `toolErrorResult`, `lib/index.js:3541-3544` / `:3616-3622`). An unknown tool
  * name behaves the same way with `ToolNotFoundError` / `UNKNOWN_TOOL`. Assertions
  * must therefore inspect `result.isError` + `result.error.info`, and must not
- * rely on `try`/`catch` around `execute()` to detect a rejected call.
+ * rely on `try`/`catch` around `execute()` to detect a rejected call. Batch
+ * infrastructure errors can reject; their bounded cause and partial call IDs are logged.
  *
  * WHAT THIS GATE DOES NOT COVER — read before trusting a green run:
  *   - no LLM and no agent loop: `execute()` runs with `agent` unset, so
@@ -125,6 +126,7 @@
  * directory, and the temporary DSH home is removed in `finally`.
  */
 import assert from 'node:assert/strict'
+import { executeSmokeTool, describeSmokeError } from './smoke-tool-call.mjs'
 import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -287,6 +289,8 @@ function describeCall(entry, extra = []) {
   if (entry?.skipped) lines.push(`skipped:       ${entry.skipped}`)
   if (result?.outcome === 'threw') {
     lines.push(`threw:         ${result.error?.name ?? 'Error'}: ${result.error?.message ?? '(no message)'}`)
+    if (result.error?.cause) lines.push(`cause:         ${JSON.stringify(result.error.cause)}`)
+    if (result.error?.partial) lines.push(`partial:       ${JSON.stringify(result.error.partial)}`)
     if (result.error?.violations) lines.push(`violations:    ${JSON.stringify(result.error.violations)}`)
     if (result.error?.code) lines.push(`code:          ${result.error.code}`)
   } else if (result) {
@@ -366,12 +370,8 @@ const emit = (kind, payload) => {
   process.stdout.write('${GATE_PREFIX}' + JSON.stringify(Object.assign({ kind: kind }, payload)) + '\\n')
 }
 
-const describeError = error => ({
-  name: error && error.name ? error.name : typeof error,
-  message: error && error.message ? error.message : String(error),
-  code: error && error.code ? error.code : null,
-  violations: error && Array.isArray(error.violations) ? error.violations : null,
-})
+const describeError = ${describeSmokeError.toString()}
+const executeSmokeTool = ${executeSmokeTool.toString()}
 
 const waitForTool = async (ctx, name, deadline) => {
   for (;;) {
@@ -385,12 +385,9 @@ const callTool = async (ctx, name, args) => {
   callSequence += 1
   const callId = 'smoke-' + name + '-' + callSequence
   try {
-    const result = await ctx.tools.execute({
-      callId: callId,
-      name: name,
-      arguments: args,
-      signal: new AbortController().signal,
-    })
+    const result = await executeSmokeTool(
+      ctx.tools, callId, name, args, new AbortController().signal,
+    )
     const content = result.content === undefined ? null : result.content
     return {
       outcome: 'returned',

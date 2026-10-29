@@ -201,11 +201,13 @@ Use the **sidebar → Plugins page** on desktop to upgrade / remove. A failed in
 
 ### DSH compatibility
 
-DSH compatibility has **three layers** — do not conflate them:
+The following table records **historical DSH 0.2.0-rc.2 behavior**. As of 2026-10-29, the [current official rules](https://deepseek-harness.github.io/deepseek-harness/develop/basic/publish) prioritize `engines.dsh`, falling back to DSH peer ranges only when it is absent. This plugin declares the same range in both places.
+
+That older runtime has three compatibility layers:
 
 | Layer | Where | Who enforces it | What happens on mismatch |
 |---|---|---|---|
-| **Declaration** | `package.json` → `engines.dsh` (`>=0.1.0-rc.6 <0.3.0-0`) | **Nothing reads it today** (the DSH 0.2.0-rc.2 runtime never reads `engines.dsh`; the official manifest comment says *"DSH compatibility is declarative until a reader enforces it"*) | Expresses author intent only; blocks nothing |
+| **Declaration** | `package.json` → `engines.dsh` (`>=0.1.0-rc.6 <0.3.0-0`) | **That version does not read it** (the DSH 0.2.0-rc.2 runtime never reads `engines.dsh`; the official manifest comment says *"DSH compatibility is declarative until a reader enforces it"*) | Expresses author intent only; blocks nothing |
 | **Enforced** | The ranges in `peerDependencies` whose names are `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` (this repo has exactly one: `@deepseek-ai/dsh-tools: ">=0.1.0-rc.6 <0.3.0-0"`) | DSH install checks + the profile startup preflight `evaluatePluginCompatibility()` | Install is refused, or the plugin row is disabled at startup |
 | **Not enforced** | `@deepseek-ai/cordis: ">=4.0.2 <5"` (and `@deepseek-ai/schemastery`) | DSH's peer name filter only accepts `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` | Resolved by pnpm; DSH makes no compatibility judgement |
 
@@ -260,6 +262,8 @@ dsh-scout release gate: PASS (4 DSH versions, >=0.1.0-rc.6 <0.3.0-0)
 | `0.2.1-alpha.2` | `alpha` | Pass |
 
 This table previously recorded the **0.9.0** and **0.9.1** candidate tarball results; 0.9.3 keeps the identical `peerDependencies` and `engines.dsh` ranges (**unchanged**) — this version changes the install docs and the diagnostic surface (the desktop-app path in the install chapter, the README version-reference guard, and the plugin version in `/scout status`), not dependencies or the runtime contract — and it passed the same gate again on the same four exact versions (4/4), so the table is updated to this version. **0.9.3 is published on npm** (`dist-tags.latest` = `0.9.3`): the release workflow (run `38428072425`) ran the same four-version gate before `pnpm pack`, so the table verifies the exact 0.9.3 that shipped. The npm-channel column is still the 2026-10-12 check; this re-run did not re-check it. The previous release, **0.9.2, is published on npm** (`dist-tags.latest` = `0.9.2`): the release workflow (run `38406696598`) ran the same four-version gate before `pnpm pack`, so the 0.9.2 four-version pass this table recorded at the time is the exact artifact that shipped. The `/scout` command and Skill added in 0.9.1 are optional bindings, skipped silently on hosts without the corresponding services, so they do not affect loading.
+
+2026-10-29 verification-script repair: nightly checks use Node 24 for the Node ≥24.9 requirement of DSH `0.2.2-alpha.2`. The verifier selects single-call or batch execution via the public `setExecutor` capability, checks result cardinality and call IDs, and never retries failures. This repair is not yet published to npm; see the [verification record](docs/verification-dsh-2026-10-29.md).
 
 Future `0.2.x` versions still require runtime verification. The [nightly compatibility workflow](https://github.com/MaxHou-infinity/dsh-scout/actions/workflows/compatibility-nightly.yml) resolves npm's `latest`, `next`, and `alpha` tags to exact versions before running tests and the isolated profile check. The badge shows the latest workflow result; this table records versions already verified.
 

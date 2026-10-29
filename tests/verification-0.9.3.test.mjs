@@ -277,6 +277,7 @@ const GUARD_INPUTS = [
   'locale/zh.json',
   'scripts/check-release.mjs',
   'scripts/profile-smoke.mjs',
+  'scripts/smoke-tool-call.mjs',
   'docs/dsh-scout-product-contract.md',
   'docs/fixtures/dsh-scout/snapmaker-hr-head.json',
   'tests/package.test.mjs',
